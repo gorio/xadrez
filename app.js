@@ -1,1 +1,1 @@
-console.log('Xadrez Online iniciado');
+console.log('Scaffold do projeto de xadrez');
