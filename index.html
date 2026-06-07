@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
+    <title>Xadrez Online | Golf Oscar Romeo</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50' font-size='52'%3E%E2%99%9E%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Golf Oscar Romeo</p>
+          <h1>Xadrez Online</h1>
+          <p class="subtitle">Jogue localmente ou crie partidas multiplayer turn-by-turn para cada piloto fazer sua jogada no próprio tempo.</p>
+        </div>
+        <div class="hero-card">
+          <span id="connectionStatus" class="status-dot offline">Offline</span>
+          <strong id="gameCodeLabel">Sem partida online</strong>
+          <small id="playerLabel">Jogador local</small>
+        </div>
+      </section>
+
+      <main class="layout">
+        <aside class="panel controls-panel">
+          <h2>Modo de jogo</h2>
+          <div class="button-grid">
+            <button id="newLocalBtn" class="primary">Novo singleplayer</button>
+            <button id="createOnlineBtn">Criar online</button>
+          </div>
+
+          <label class="field">
+            <span>Entrar em partida</span>
+            <div class="inline-field">
+              <input id="joinCodeInput" type="text" placeholder="Código" autocomplete="off" />
+              <button id="joinOnlineBtn">Entrar</button>
+            </div>
+          </label>
+
+          <div class="divider"></div>
+
+          <h2>Turno</h2>
+          <div id="turnBadge" class="turn-badge">Brancas jogam</div>
+          <p id="gameStatus" class="muted">Partida pronta para decolar.</p>
+
+          <div class="button-grid">
+            <button id="flipBoardBtn">Virar tabuleiro</button>
+            <button id="undoBtn">Desfazer</button>
+            <button id="copyLinkBtn">Copiar link</button>
+            <button id="exportPgnBtn">Exportar PGN</button>
+          </div>
+
+          <div id="firebaseAlert" class="alert hidden">
+            Para multiplayer online real, configure o Firebase em <code>firebase-config.js</code>.
+          </div>
+        </aside>
+
+        <section class="board-shell">
+          <div id="board" class="board" aria-label="Tabuleiro de xadrez"></div>
+        </section>
+
+        <aside class="panel history-panel">
+          <h2>Histórico</h2>
+          <ol id="moveHistory" class="moves"></ol>
+          <textarea id="pgnOutput" readonly placeholder="PGN aparecerá aqui"></textarea>
+        </aside>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
