@@ -4,21 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111827" />
+    <meta name="description" content="Xadrez online singleplayer e multiplayer P2P turn-by-turn." />
     <title>Xadrez Online | Golf Oscar Romeo</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50' font-size='52'%3E%E2%99%9E%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <noscript>Ative o JavaScript para jogar.</noscript>
     <div id="app">
       <section class="hero">
         <div>
           <p class="eyebrow">Golf Oscar Romeo</p>
           <h1>Xadrez Online</h1>
-          <p class="subtitle">Jogue localmente ou crie partidas multiplayer turn-by-turn para cada piloto fazer sua jogada no próprio tempo.</p>
+          <p class="subtitle">Singleplayer local e multiplayer online simples por link, com jogadas turn-by-turn e sem login.</p>
         </div>
         <div class="hero-card">
           <span id="connectionStatus" class="status-dot offline">Offline</span>
-          <strong id="gameCodeLabel">Sem partida online</strong>
+          <strong id="gameCodeLabel">Sem sala online</strong>
           <small id="playerLabel">Jogador local</small>
         </div>
       </section>
@@ -28,20 +31,20 @@
           <h2>Modo de jogo</h2>
           <div class="button-grid">
             <button id="newLocalBtn" class="primary">Novo singleplayer</button>
-            <button id="createOnlineBtn">Criar online</button>
+            <button id="createOnlineBtn">Criar sala online</button>
           </div>
 
           <label class="field">
-            <span>Entrar em partida</span>
+            <span>Entrar em sala</span>
             <div class="inline-field">
-              <input id="joinCodeInput" type="text" placeholder="Código" autocomplete="off" />
+              <input id="joinCodeInput" type="text" placeholder="Código ou link" autocomplete="off" />
               <button id="joinOnlineBtn">Entrar</button>
             </div>
           </label>
 
           <div class="divider"></div>
 
-          <h2>Turno</h2>
+          <h2>Partida</h2>
           <div id="turnBadge" class="turn-badge">Brancas jogam</div>
           <p id="gameStatus" class="muted">Partida pronta para decolar.</p>
 
@@ -52,8 +55,8 @@
             <button id="exportPgnBtn">Exportar PGN</button>
           </div>
 
-          <div id="firebaseAlert" class="alert hidden">
-            Para multiplayer online real, configure o Firebase em <code>firebase-config.js</code>.
+          <div class="tip">
+            <strong>Multiplayer:</strong> crie uma sala e envie o link. A conexão é direta entre navegadores via WebRTC/PeerJS.
           </div>
         </aside>
 
@@ -70,6 +73,8 @@
     </div>
 
     <div id="toast" class="toast hidden"></div>
-    <script type="module" src="./app.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js" integrity="sha512-0wurzE0A4bWl75mwHljc9sEOAGC2ELpKba6d7n4rh8bTIyCvU/UedX5xQHyrQOVG+6VYz+d89r0VQw9GfdYPow==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+    <script src="./app.js"></script>
   </body>
 </html>
