@@ -1,0 +1,14 @@
+{
+  "name": "chess-websocket-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Servidor WebSocket puro para jogo de xadrez online multiplayer.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "ws": "^8.18.0"
+  }
+}
