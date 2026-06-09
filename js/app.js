@@ -396,26 +396,26 @@ function renderGame() {
     if (engine.lastMove) {
       const [fvr, fvc] = logicToView(...engine.lastMove.from);
       const [tvr, tvc] = logicToView(...engine.lastMove.to);
-      if ((vr===fvr && vc===fvc) || (vr===tvr && vc===tvc))
+      if ((vr === fvr && vc === fvc) || (vr === tvr && vc === tvc)) {
         sq.classList.add('last-move');
+      }
     }
 
     /* peça */
     const piece = engine.piece(lr, lc);
     if (piece) {
       const span = document.createElement('span');
-      /* classe de cor para estilização CSS */
-      span.className = 'piece piece-' + piece.color;
+      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
       span.textContent = SYMBOLS[piece.color + piece.type] || '?';
       sq.appendChild(span);
 
-      /* rei em xeque */
-      if (piece.type==='K' && piece.color===engine.turn && engine.status==='check')
+      if (piece.type === 'K' && piece.color === engine.turn && engine.status === 'check') {
         sq.classList.add('in-check');
+      }
     }
   });
 
-  /* seleção e dicas de movimento */
+  /* seleção e dicas */
   if (selectedSq !== null) {
     const [slr, slc] = selectedSq;
     const [svr, svc] = logicToView(slr, slc);
@@ -439,48 +439,30 @@ function renderGame() {
 }
 
 function updateCaptured() {
-  /* valores das peças para calcular vantagem material */
-  const pieceValue = { Q:9, R:5, B:3, N:3, P:1 };
+  const order = { Q:9, R:5, B:3, N:3, P:1 };
 
-  const render = (capturedByColor, displayElId) => {
-    const el = document.getElementById(displayElId);
+  const render = (capturedColor, elId) => {
+    const el = document.getElementById(elId);
     if (!el) return;
+    const pieces = [...engine.captured[capturedColor]]
+      .sort((a, b) => (order[b] || 0) - (order[a] || 0));
+
     el.innerHTML = '';
-
-    /* peças capturadas por 'capturedByColor' são peças do inimigo */
-    const enemyColor = capturedByColor === 'w' ? 'b' : 'w';
-    const pieces = [...engine.captured[capturedByColor]]
-      .sort((a, b) => (pieceValue[b]||0) - (pieceValue[a]||0));
-
-    if (pieces.length === 0) return;
-
-    let score = pieces.reduce((s, t) => s + (pieceValue[t]||0), 0);
-    /* subtrai o valor das peças inimigas capturadas pelo oponente */
-    const opponentScore = engine.captured[enemyColor]
-      .reduce((s, t) => s + (pieceValue[t]||0), 0);
-    const advantage = score - opponentScore;
-
     pieces.forEach(type => {
       const span = document.createElement('span');
-      span.className = 'cap-piece cap-piece-' + enemyColor;
-      span.textContent = SYMBOLS[enemyColor + type] || type;
+      /* peças capturadas são exibidas na cor original delas */
+      span.className = 'cap-piece ' + (capturedColor === 'w' ? 'cap-white' : 'cap-black');
+      span.textContent = SYMBOLS[capturedColor + type];
       el.appendChild(span);
     });
-
-    if (advantage > 0) {
-      const score = document.createElement('span');
-      score.className = 'advantage-score';
-      score.textContent = '+' + advantage;
-      el.appendChild(score);
-    }
   };
 
   if (myColor === 'w') {
-    render('w', 'captured-bottom'); /* brancas capturaram → exibe embaixo */
-    render('b', 'captured-top');
+    render('b', 'captured-bottom'); /* brancas capturaram pretas */
+    render('w', 'captured-top');    /* pretas capturaram brancas */
   } else {
-    render('b', 'captured-bottom');
-    render('w', 'captured-top');
+    render('w', 'captured-bottom');
+    render('b', 'captured-top');
   }
 }
 
