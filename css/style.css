@@ -684,3 +684,58 @@ body {
     height: min(90vw, 480px);
   }
 }
+
+/* ===== CORES DAS PEÇAS ===== */
+.piece-w {
+  color: #ffffff;
+  text-shadow:
+    0 0 2px #000,
+    0 1px 3px rgba(0,0,0,0.8),
+    1px 1px 0 #555,
+    -1px -1px 0 #333;
+}
+
+.piece-b {
+  color: #1a1a1a;
+  text-shadow:
+    0 0 2px rgba(255,255,255,0.4),
+    0 1px 2px rgba(0,0,0,0.6),
+    1px 1px 0 rgba(255,255,255,0.15);
+}
+
+/* ===== PEÇAS CAPTURADAS ===== */
+.captured-pieces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin-top: 4px;
+  min-height: 18px;
+  align-items: center;
+}
+
+.cap-piece {
+  font-size: 14px;
+  line-height: 1;
+  display: inline-block;
+}
+
+.cap-piece-w {
+  color: #ffffff;
+  text-shadow: 0 0 1px #000, 1px 1px 0 #555;
+}
+
+.cap-piece-b {
+  color: #1a1a1a;
+  text-shadow: 0 0 1px rgba(255,255,255,0.3);
+  /* força visibilidade no fundo escuro */
+  background: rgba(255,255,255,0.12);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.advantage-score {
+  font-size: 11px;
+  color: var(--accent2);
+  font-weight: 700;
+  margin-left: 4px;
+}

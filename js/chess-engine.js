@@ -25,17 +25,16 @@ class ChessEngine {
   }
 
   piece(r, c) {
-    if (!this._inBounds(r, c)) return null;
-    if (!this.board[r])        return null;
+    if (r < 0 || r > 7 || c < 0 || c > 7) return null;
+    if (!this.board || !this.board[r])      return null;
     return this.board[r][c] || null;
   }
 
   _inBounds(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
   _enemy(color)   { return color === 'w' ? 'b' : 'w'; }
 
-  /* ---- MOVIMENTOS PSEUDO-LEGAIS ---- */
   _pseudoMoves(r, c, board, castling, enPassant) {
-    const p = board[r][c];
+    const p = board[r] && board[r][c];
     if (!p) return [];
     const { type, color } = p;
     const moves = [];
@@ -46,8 +45,8 @@ class ChessEngine {
     };
 
     if (type === 'P') {
-      const dir      = color === 'w' ? -1 : 1;
-      const startRow = color === 'w' ?  6 :  1;
+      const dir = color === 'w' ? -1 : 1;
+      const startRow = color === 'w' ? 6 : 1;
       if (board[r+dir] && !board[r+dir][c]) {
         add(r+dir, c);
         if (r === startRow && board[r+2*dir] && !board[r+2*dir][c])
@@ -105,8 +104,7 @@ class ChessEngine {
     return moves;
   }
 
-  /* ---- APLICA MOVIMENTO ---- */
-  _applyMove(board, move, enPassant) {
+  _applyMove(board, move) {
     const nb = board.map(row => row.map(p => p ? {...p} : null));
     const [fr,fc] = move.from;
     const [tr,tc] = move.to;
@@ -116,8 +114,8 @@ class ChessEngine {
       const capRow = p.color==='w' ? tr+1 : tr-1;
       nb[capRow][tc] = null;
     }
-    if (move.castle==='K') { const row=fr; nb[row][5]={...nb[row][7]}; nb[row][7]=null; }
-    if (move.castle==='Q') { const row=fr; nb[row][3]={...nb[row][0]}; nb[row][0]=null; }
+    if (move.castle==='K') { nb[fr][5]={...nb[fr][7]}; nb[fr][7]=null; }
+    if (move.castle==='Q') { nb[fr][3]={...nb[fr][0]}; nb[fr][0]=null; }
 
     nb[tr][tc] = p;
     nb[fr][fc] = null;
@@ -128,7 +126,6 @@ class ChessEngine {
     return nb;
   }
 
-  /* ---- XEQUE ---- */
   _inCheck(board, color, castling, enPassant) {
     let kr=-1, kc=-1;
     for (let r=0;r<8;r++) for (let c=0;c<8;c++)
@@ -143,9 +140,8 @@ class ChessEngine {
     return false;
   }
 
-  /* ---- MOVIMENTOS LEGAIS ---- */
   legalMoves(r, c) {
-    const p = this.board[r][c];
+    const p = this.piece(r, c);
     if (!p || p.color !== this.turn) return [];
     const pseudo = this._pseudoMoves(r, c, this.board, this.castling, this.enPassant);
     const legal  = [];
@@ -153,21 +149,20 @@ class ChessEngine {
     for (const move of pseudo) {
       if (move.castle) {
         const color  = p.color;
-        const row    = r;
         const midCol = move.castle==='K' ? 5 : 3;
         let safe = !this._inCheck(this.board, color, this.castling, this.enPassant);
         if (safe) {
-          const nb1 = this._applyMove(this.board, {from:[row,c], to:[row,midCol]}, this.enPassant);
+          const nb1 = this._applyMove(this.board, {from:[r,c], to:[r,midCol]});
           if (this._inCheck(nb1, color, this.castling, this.enPassant)) safe = false;
         }
         if (safe) {
-          const nb2 = this._applyMove(this.board, move, this.enPassant);
+          const nb2 = this._applyMove(this.board, move);
           if (this._inCheck(nb2, color, this.castling, this.enPassant)) safe = false;
         }
         if (safe) legal.push(move);
         continue;
       }
-      const nb = this._applyMove(this.board, move, this.enPassant);
+      const nb = this._applyMove(this.board, move);
       if (!this._inCheck(nb, p.color, this.castling, this.enPassant)) legal.push(move);
     }
     return legal;
@@ -180,7 +175,6 @@ class ChessEngine {
     return all;
   }
 
-  /* ---- EXECUTA MOVIMENTO ---- */
   makeMove(from, to, promoteTo='Q') {
     const [fr,fc] = from;
     const [tr,tc] = to;
@@ -200,7 +194,7 @@ class ChessEngine {
     }
 
     const san = this._san(move, legal);
-    this.board = this._applyMove(this.board, move, this.enPassant);
+    this.board = this._applyMove(this.board, move);
 
     if (p.type==='K') { this.castling[p.color+'K']=false; this.castling[p.color+'Q']=false; }
     if (p.type==='R') {
@@ -225,11 +219,9 @@ class ChessEngine {
     if (this.status==='checkmate') sanFull += '#';
     else if (this.status==='check') sanFull += '+';
     this.history.push(sanFull);
-
     return true;
   }
 
-  /* ---- NOTAÇÃO SAN ---- */
   _san(move, legal) {
     const [fr,fc] = move.from;
     const [tr,tc] = move.to;
@@ -265,29 +257,31 @@ class ChessEngine {
     return san;
   }
 
-  /* ---- SERIALIZAÇÃO — usa string compacta para evitar problema de null no Firebase ---- */
+  /* Serialização compacta — evita arrays com null que o Firebase distorce */
   serialize() {
-    // Tabuleiro como string de 64 chars: "wR","bP","__" etc.
-    const boardStr = this.board.flat().map(p => p ? p.color+p.type : '__').join(',');
+    const boardStr = this.board
+      .flat()
+      .map(p => p ? p.color + p.type : '__')
+      .join(',');
 
     return {
       boardStr,
-      turn:      this.turn,
-      castling:  { ...this.castling },
-      enPassant: this.enPassant ? this.enPassant.join(',') : '',
-      lastMoveFrom: this.lastMove ? this.lastMove.from.join(',') : '',
-      lastMoveTo:   this.lastMove ? this.lastMove.to.join(',')   : '',
-      status:    this.status,
-      history:   this.history.length ? this.history.join('|') : '',
-      capturedW: this.captured.w.join(','),
-      capturedB: this.captured.b.join(',')
+      turn:         this.turn,
+      castling:     { ...this.castling },
+      enPassant:    this.enPassant    ? this.enPassant.join(',')    : '',
+      lastMoveFrom: this.lastMove     ? this.lastMove.from.join(',') : '',
+      lastMoveTo:   this.lastMove     ? this.lastMove.to.join(',')   : '',
+      status:       this.status,
+      history:      this.history.length  ? this.history.join('|')  : '',
+      capturedW:    this.captured.w.length ? this.captured.w.join(',') : '',
+      capturedB:    this.captured.b.length ? this.captured.b.join(',') : ''
     };
   }
 
   deserialize(data) {
     if (!data) return;
 
-    // Reconstrói tabuleiro da string compacta
+    /* tabuleiro via string compacta */
     if (data.boardStr) {
       const cells = data.boardStr.split(',');
       this.board = [];
@@ -300,11 +294,23 @@ class ChessEngine {
             : null;
         }
       }
+    } else {
+      /* fallback: formato legado com arrays (partidas antigas) */
+      this.board = Array(8).fill(null).map((_, r) =>
+        Array(8).fill(null).map((_, c) => {
+          const raw = data.board?.[r]?.[c];
+          if (!raw) return null;
+          if (typeof raw === 'string') return { color: raw[0], type: raw.slice(1) };
+          return raw;
+        })
+      );
     }
 
     this.turn     = data.turn     || 'w';
-    this.castling = data.castling ? { ...data.castling } : { wK:true, wQ:true, bK:true, bQ:true };
     this.status   = data.status   || 'playing';
+    this.castling = data.castling
+      ? { ...data.castling }
+      : { wK:true, wQ:true, bK:true, bQ:true };
 
     this.enPassant = (data.enPassant && data.enPassant !== '')
       ? data.enPassant.split(',').map(Number)
