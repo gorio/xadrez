@@ -2,13 +2,13 @@
    CONFIGURAÇÃO DO FIREBASE
    =================================================== */
 const FIREBASE_CONFIG = {
-  apiKey: "COLE_SUA_API_KEY_AQUI",
-  authDomain: "SEU_PROJETO.firebaseapp.com",
-  databaseURL: "https://SEU_PROJETO-default-rtdb.firebaseio.com",
-  projectId: "SEU_PROJETO",
-  storageBucket: "SEU_PROJETO.appspot.com",
-  messagingSenderId: "SEU_SENDER_ID",
-  appId: "SEU_APP_ID"
+  apiKey: "AIzaSyCa0WmUo1PIrlaYW6Ei8ZZK3XLZ4i0gIfo",
+  authDomain: "golf-oscar-romeo.firebaseapp.com",
+  projectId: "golf-oscar-romeo",
+  storageBucket: "golf-oscar-romeo.firebasestorage.app",
+  messagingSenderId: "71631208569",
+  appId: "1:71631208569:web:e7a1cc7ad20903ce5ad4a8",
+  measurementId: "G-9TKPXNPL54"
 };
 
 /* ===================================================
