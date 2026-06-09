@@ -6,6 +6,7 @@ const FIREBASE_CONFIG = {
   authDomain: "golf-oscar-romeo.firebaseapp.com",
   projectId: "golf-oscar-romeo",
   storageBucket: "golf-oscar-romeo.firebasestorage.app",
+  databaseURL: "https://golf-oscar-romeo-default-rtdb.firebaseio.com",
   messagingSenderId: "71631208569",
   appId: "1:71631208569:web:e7a1cc7ad20903ce5ad4a8",
   measurementId: "G-9TKPXNPL54"
