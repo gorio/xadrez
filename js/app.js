@@ -1,91 +1,117 @@
 /* ===================================================
    CONFIGURAÇÃO DO FIREBASE
-   Substitua pelos dados do seu projeto Firebase!
    =================================================== */
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCa0WmUo1PIrlaYW6Ei8ZZK3XLZ4i0gIfo",
-  authDomain: "golf-oscar-romeo.firebaseapp.com",
-  projectId: "golf-oscar-romeo",
-  storageBucket: "golf-oscar-romeo.firebasestorage.app",
-  messagingSenderId: "71631208569",
-  appId: "1:71631208569:web:e7a1cc7ad20903ce5ad4a8",
-  measurementId: "G-9TKPXNPL54"
+  apiKey: "COLE_SUA_API_KEY_AQUI",
+  authDomain: "SEU_PROJETO.firebaseapp.com",
+  databaseURL: "https://SEU_PROJETO-default-rtdb.firebaseio.com",
+  projectId: "SEU_PROJETO",
+  storageBucket: "SEU_PROJETO.appspot.com",
+  messagingSenderId: "SEU_SENDER_ID",
+  appId: "SEU_APP_ID"
 };
+
 /* ===================================================
    SÍMBOLOS DAS PEÇAS
    =================================================== */
 const SYMBOLS = {
-  wK: '♔', wQ: '♕', wR: '♖', wB: '♗', wN: '♘', wP: '♙',
-  bK: '♚', bQ: '♛', bR: '♜', bB: '♝', bN: '♞', bP: '♟'
+  wK:'♔', wQ:'♕', wR:'♖', wB:'♗', wN:'♘', wP:'♙',
+  bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟'
 };
 
 /* ===================================================
    ESTADO GLOBAL
    =================================================== */
-let db, roomRef, gameRef;
-let engine = new ChessEngine();
-let myColor = null;
-let myId = null;
-let roomCode = null;
+let db, roomRef;
+let engine     = new ChessEngine();
+let myColor    = null;
+let myId       = null;
+let roomCode   = null;
 let selectedSq = null;
-let legalMovesCache = [];
+let legalMovesCache  = [];
 let pendingPromotion = null;
 let gameActive = false;
 
 /* ===================================================
-   INICIALIZAÇÃO
+   BOOT
    =================================================== */
 window.addEventListener('DOMContentLoaded', () => {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
     db = firebase.database();
   } catch (e) {
-    alert('Erro ao conectar ao Firebase. Verifique a configuração em js/app.js');
+    alert('Erro Firebase: verifique a configuração em js/app.js\n' + e.message);
     return;
   }
 
   myId = Math.random().toString(36).slice(2, 10);
 
-  // Botões do lobby
+  /* botões lobby */
   document.getElementById('btn-create').addEventListener('click', createGame);
   document.getElementById('btn-join').addEventListener('click', joinGame);
   document.getElementById('input-room').addEventListener('keydown', e => {
     if (e.key === 'Enter') joinGame();
   });
 
-  // Sala de espera
+  /* botões sala de espera */
   document.getElementById('btn-copy').addEventListener('click', copyRoomCode);
   document.getElementById('btn-cancel').addEventListener('click', cancelGame);
 
-  // Jogo
+  /* botões jogo */
   document.getElementById('btn-resign').addEventListener('click', resign);
-  document.getElementById('btn-new-game').addEventListener('click', () => showScreen('lobby'));
+  document.getElementById('btn-new-game').addEventListener('click', () => goLobby());
 
-  // Game over modal
+  /* modal game over */
   document.getElementById('btn-gameover-new').addEventListener('click', () => {
     hideModal('modal-gameover');
-    showScreen('lobby');
+    goLobby();
   });
   document.getElementById('btn-gameover-lobby').addEventListener('click', () => {
     hideModal('modal-gameover');
-    showScreen('lobby');
+    goLobby();
   });
 });
 
 /* ===================================================
-   TELAS
+   NAVEGAÇÃO
    =================================================== */
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById(`screen-${name}`).classList.add('active');
+  document.getElementById('screen-' + name).classList.add('active');
 }
 
-function showModal(id) {
-  document.getElementById(id).classList.remove('hidden');
+function showModal(id)  { document.getElementById(id).classList.remove('hidden'); }
+function hideModal(id)  { document.getElementById(id).classList.add('hidden'); }
+
+function goLobby() {
+  gameActive = false;
+  if (roomRef) { roomRef.off(); roomRef = null; }
+  engine.reset();
+  selectedSq = null;
+  legalMovesCache = [];
+  document.getElementById('input-room').value = '';
+  clearLobbyError();
+  showScreen('lobby');
 }
 
-function hideModal(id) {
-  document.getElementById(id).classList.add('hidden');
+function showLobbyError(msg) {
+  document.getElementById('lobby-error').textContent = msg;
+}
+
+function clearLobbyError() {
+  document.getElementById('lobby-error').textContent = '';
+}
+
+/* ===================================================
+   GERAR CÓDIGO DE SALA
+   =================================================== */
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
 }
 
 /* ===================================================
@@ -95,28 +121,30 @@ async function createGame() {
   const btn = document.getElementById('btn-create');
   btn.disabled = true;
   btn.textContent = 'Criando...';
+  clearLobbyError();
 
   try {
     roomCode = generateRoomCode();
-    myColor = 'w';
+    myColor  = 'w';
     engine.reset();
 
-    roomRef = db.ref(`rooms/${roomCode}`);
+    roomRef = db.ref('rooms/' + roomCode);
 
     await roomRef.set({
-      white: myId,
-      black: null,
-      state: engine.serialize(),
+      white:     myId,
+      black:     null,
+      state:     engine.serialize(),
       createdAt: Date.now(),
-      status: 'waiting'
+      status:    'waiting'
     });
 
-    // Remove sala após 10 min se ninguém entrar
+    /* auto-remove após 10 min sem oponente */
     setTimeout(() => {
+      if (!roomRef) return;
       roomRef.once('value', snap => {
         if (snap.val()?.status === 'waiting') {
           roomRef.remove();
-          showScreen('lobby');
+          goLobby();
         }
       });
     }, 600000);
@@ -124,7 +152,7 @@ async function createGame() {
     document.getElementById('display-room-code').textContent = roomCode;
     showScreen('waiting');
 
-    // Aguarda oponente
+    /* aguarda oponente */
     roomRef.on('value', snap => {
       const data = snap.val();
       if (!data) return;
@@ -136,6 +164,7 @@ async function createGame() {
 
   } catch (e) {
     showLobbyError('Erro ao criar sala: ' + e.message);
+  } finally {
     btn.disabled = false;
     btn.textContent = 'Criar Partida';
   }
@@ -146,7 +175,7 @@ async function createGame() {
    =================================================== */
 async function joinGame() {
   const input = document.getElementById('input-room');
-  const code = input.value.trim().toUpperCase();
+  const code  = input.value.trim().toUpperCase();
   clearLobbyError();
 
   if (code.length !== 6) {
@@ -159,38 +188,63 @@ async function joinGame() {
   btn.textContent = 'Entrando...';
 
   try {
-    roomRef = db.ref(`rooms/${code}`);
+    roomRef = db.ref('rooms/' + code);
     const snap = await roomRef.once('value');
     const data = snap.val();
 
     if (!data) {
       showLobbyError('Sala não encontrada.');
-      btn.disabled = false; btn.textContent = 'Entrar';
+      roomRef = null;
       return;
     }
     if (data.black) {
       showLobbyError('Sala já está cheia.');
-      btn.disabled = false; btn.textContent = 'Entrar';
+      roomRef = null;
       return;
     }
-    if (data.status === 'finished') {
+    if (data.status === 'finished' || data.status === 'resigned') {
       showLobbyError('Esta partida já terminou.');
-      btn.disabled = false; btn.textContent = 'Entrar';
+      roomRef = null;
       return;
     }
 
     roomCode = code;
-    myColor = 'b';
+    myColor  = 'b';
     engine.deserialize(data.state);
 
     await roomRef.update({ black: myId, status: 'playing' });
-
     startGame();
 
   } catch (e) {
-    showLobbyError('Erro ao entrar na sala: ' + e.message);
-    btn.disabled = false; btn.textContent = 'Entrar';
+    showLobbyError('Erro ao entrar: ' + e.message);
+    roomRef = null;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Entrar';
   }
+}
+
+/* ===================================================
+   CANCELAR SALA DE ESPERA
+   =================================================== */
+async function cancelGame() {
+  if (roomRef) {
+    await roomRef.remove().catch(() => {});
+    roomRef.off();
+    roomRef = null;
+  }
+  goLobby();
+}
+
+/* ===================================================
+   COPIAR CÓDIGO
+   =================================================== */
+function copyRoomCode() {
+  navigator.clipboard.writeText(roomCode).then(() => {
+    const fb = document.getElementById('copy-feedback');
+    fb.textContent = 'Copiado!';
+    setTimeout(() => { fb.textContent = ''; }, 2000);
+  });
 }
 
 /* ===================================================
@@ -201,57 +255,56 @@ function startGame() {
   selectedSq = null;
   legalMovesCache = [];
 
-  // Player labels
+  /* labels de jogador */
   if (myColor === 'w') {
-    document.getElementById('avatar-bottom').textContent = '♙';
-    document.getElementById('avatar-top').textContent = '♟';
-    document.getElementById('label-bottom').textContent = 'Você (Brancas)';
-    document.getElementById('label-top').textContent = 'Oponente (Pretas)';
+    document.getElementById('avatar-bottom').textContent  = '♙';
+    document.getElementById('avatar-top').textContent     = '♟';
+    document.getElementById('label-bottom').textContent   = 'Você (Brancas)';
+    document.getElementById('label-top').textContent      = 'Oponente (Pretas)';
   } else {
-    document.getElementById('avatar-bottom').textContent = '♟';
-    document.getElementById('avatar-top').textContent = '♙';
-    document.getElementById('label-bottom').textContent = 'Você (Pretas)';
-    document.getElementById('label-top').textContent = 'Oponente (Brancas)';
+    document.getElementById('avatar-bottom').textContent  = '♟';
+    document.getElementById('avatar-top').textContent     = '♙';
+    document.getElementById('label-bottom').textContent   = 'Você (Pretas)';
+    document.getElementById('label-top').textContent      = 'Oponente (Brancas)';
   }
 
   buildBoard();
   renderGame();
   showScreen('game');
+
   document.getElementById('btn-resign').classList.remove('hidden');
   document.getElementById('btn-new-game').classList.add('hidden');
 
-  // Escuta mudanças no Firebase
-  gameRef = roomRef.child('state');
+  /* escuta Firebase */
   roomRef.on('value', snap => {
     const data = snap.val();
     if (!data) return;
 
-    // Oponente saiu / resignou
     if (data.status === 'resigned' && data.winner !== myColor) {
       engine.deserialize(data.state);
       renderGame();
-      showGameOver('Vitória!', 'O oponente resignou a partida.');
       gameActive = false;
+      showGameOver('Vitória! 🏆', 'O oponente resignou a partida.');
       return;
     }
 
     if (data.status === 'abandoned') {
-      showGameOver('Vitória!', 'O oponente abandonou a partida.');
       gameActive = false;
+      showGameOver('Vitória! 🏆', 'O oponente abandonou a partida.');
       return;
     }
 
-    // Atualiza estado se for turno do oponente
+    /* atualiza apenas quando for a minha vez (oponente jogou) */
     if (data.state && data.state.turn === myColor) {
       engine.deserialize(data.state);
       renderGame();
 
       if (engine.status === 'checkmate') {
+        gameActive = false;
         showGameOver('Xeque-mate!', 'Você perdeu. Melhor sorte na próxima!');
-        gameActive = false;
       } else if (engine.status === 'stalemate') {
-        showGameOver('Afogamento!', 'Empate por afogamento.');
         gameActive = false;
+        showGameOver('Empate!', 'Afogamento — nenhum movimento legal.');
       }
     }
   });
@@ -261,10 +314,9 @@ function startGame() {
    CONSTRUIR TABULEIRO HTML
    =================================================== */
 function buildBoard() {
-  const board = document.getElementById('chessboard');
-  board.innerHTML = '';
+  const boardEl = document.getElementById('chessboard');
+  boardEl.innerHTML = '';
 
-  // Coordenadas
   const files = myColor === 'w'
     ? ['a','b','c','d','e','f','g','h']
     : ['h','g','f','e','d','c','b','a'];
@@ -272,33 +324,35 @@ function buildBoard() {
     ? ['8','7','6','5','4','3','2','1']
     : ['1','2','3','4','5','6','7','8'];
 
-  // File coords (top e bottom)
+  /* coordenadas de arquivo (topo e base) */
   ['coords-file-top','coords-file-bottom'].forEach(id => {
-    const el = document.getElementById(id);
+    const el = boardEl.parentElement.querySelector('#' + id);
+    if (!el) return;
     el.innerHTML = '';
     files.forEach(f => {
       const span = document.createElement('span');
       span.className = 'coord-label';
-      span.style.width = `calc(min(56vw, 480px) / 8)`;
+      span.style.width = 'calc(min(56vw, 480px) / 8)';
       span.textContent = f;
       el.appendChild(span);
     });
   });
 
-  // Rank coords
+  /* coordenadas de fileira */
   ['coords-rank-left','coords-rank-right'].forEach(id => {
-    const el = document.getElementById(id);
+    const el = boardEl.parentElement.querySelector('#' + id);
+    if (!el) return;
     el.innerHTML = '';
     ranks.forEach(r => {
       const span = document.createElement('span');
       span.className = 'coord-label';
-      span.style.height = `calc(min(56vw, 480px) / 8)`;
+      span.style.height = 'calc(min(56vw, 480px) / 8)';
       span.textContent = r;
       el.appendChild(span);
     });
   });
 
-  // Casas
+  /* casas */
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       const sq = document.createElement('div');
@@ -306,39 +360,47 @@ function buildBoard() {
       sq.dataset.row = row;
       sq.dataset.col = col;
       sq.addEventListener('click', onSquareClick);
-      board.appendChild(sq);
+      boardEl.appendChild(sq);
     }
   }
+}
+
+/* ===================================================
+   MAPEAMENTO VIEW ↔ LÓGICO
+   =================================================== */
+function viewToLogic(vr, vc) {
+  if (myColor === 'w') return [vr, vc];
+  return [7 - vr, 7 - vc];
+}
+
+function logicToView(lr, lc) {
+  if (myColor === 'w') return [lr, lc];
+  return [7 - lr, 7 - lc];
 }
 
 /* ===================================================
    RENDERIZAR POSIÇÃO
    =================================================== */
 function renderGame() {
-  const squares = document.querySelectorAll('.square');
+  document.querySelectorAll('.square').forEach(sq => {
+    const vr = parseInt(sq.dataset.row);
+    const vc = parseInt(sq.dataset.col);
+    const [lr, lc] = viewToLogic(vr, vc);
 
-  squares.forEach(sq => {
-    const row = parseInt(sq.dataset.row);
-    const col = parseInt(sq.dataset.col);
-
-    // Mapeia visual → lógico
-    const [lr, lc] = viewToLogic(row, col);
-
-    // Cor da casa
-    const isLight = (row + col) % 2 === 0;
+    const isLight = (vr + vc) % 2 === 0;
     sq.className = 'square ' + (isLight ? 'light' : 'dark');
     sq.innerHTML = '';
 
-    // Último movimento
+    /* último movimento */
     if (engine.lastMove) {
-      const [fr, fc] = logicToView(...engine.lastMove.from);
-      const [tr, tc] = logicToView(...engine.lastMove.to);
-      if ((row === fr && col === fc) || (row === tr && col === tc)) {
+      const [fvr, fvc] = logicToView(...engine.lastMove.from);
+      const [tvr, tvc] = logicToView(...engine.lastMove.to);
+      if ((vr === fvr && vc === fvc) || (vr === tvr && vc === tvc)) {
         sq.classList.add('last-move');
       }
     }
 
-    // Peça
+    /* peça */
     const piece = engine.piece(lr, lc);
     if (piece) {
       const span = document.createElement('span');
@@ -346,23 +408,23 @@ function renderGame() {
       span.textContent = SYMBOLS[piece.color + piece.type] || '?';
       sq.appendChild(span);
 
-      // Rei em xeque
+      /* rei em xeque */
       if (piece.type === 'K' && piece.color === engine.turn && engine.status === 'check') {
         sq.classList.add('in-check');
       }
     }
   });
 
-  // Casa selecionada e dicas de movimento
+  /* seleção e dicas */
   if (selectedSq !== null) {
-    const [sr, sc] = selectedSq;
-    const [vr, vc] = logicToView(sr, sc);
-    const selEl = document.querySelector(`[data-row="${vr}"][data-col="${vc}"]`);
+    const [slr, slc] = selectedSq;
+    const [svr, svc] = logicToView(slr, slc);
+    const selEl = document.querySelector(`[data-row="${svr}"][data-col="${svc}"]`);
     if (selEl) selEl.classList.add('selected');
 
     legalMovesCache.forEach(m => {
-      const [mr, mc] = logicToView(m.to[0], m.to[1]);
-      const el = document.querySelector(`[data-row="${mr}"][data-col="${mc}"]`);
+      const [mvr, mvc] = logicToView(m.to[0], m.to[1]);
+      const el = document.querySelector(`[data-row="${mvr}"][data-col="${mvc}"]`);
       if (el) {
         const hasPiece = engine.piece(m.to[0], m.to[1]) || m.enPassant;
         el.classList.add(hasPiece ? 'capture-hint' : 'move-hint');
@@ -370,116 +432,112 @@ function renderGame() {
     });
   }
 
-  updateStatus();
+  updateStatusBar();
   updateMoveHistory();
   updateCaptured();
-  updateTurnIndicator();
+  updateTurnCards();
 }
 
 /* ===================================================
    CLIQUE NA CASA
    =================================================== */
 function onSquareClick(e) {
-  const sq = e.currentTarget;
-  const row = parseInt(sq.dataset.row);
-  const col = parseInt(sq.dataset.col);
-  const [lr, lc] = viewToLogic(row, col);
+  const sq  = e.currentTarget;
+  const vr  = parseInt(sq.dataset.row);
+  const vc  = parseInt(sq.dataset.col);
+  const [lr, lc] = viewToLogic(vr, vc);
 
-  if (!gameActive || engine.turn !== myColor) return;
+  if (!gameActive) return;
+  if (engine.turn !== myColor) return;
   if (['checkmate','stalemate'].includes(engine.status)) return;
 
   const piece = engine.piece(lr, lc);
 
-  // Se já tem selecionado: tenta mover
   if (selectedSq !== null) {
-    const [sr, sc] = selectedSq;
+    const [slr, slc] = selectedSq;
     const move = legalMovesCache.find(m => m.to[0] === lr && m.to[1] === lc);
 
     if (move) {
-      // Promoção?
-      if (engine.board[sr][sc]?.type === 'P' && (lr === 0 || lr === 7)) {
-        pendingPromotion = { from: [sr, sc], to: [lr, lc] };
+      /* promoção */
+      if (engine.board[slr][slc]?.type === 'P' && (lr === 0 || lr === 7)) {
+        pendingPromotion = { from: [slr, slc], to: [lr, lc] };
         showPromotion();
         return;
       }
-      executeMove([sr, sc], [lr, lc]);
+      doMove([slr, slc], [lr, lc]);
       return;
     }
 
-    // Clicou em outra peça própria
+    /* troca de peça selecionada */
     if (piece && piece.color === myColor) {
-      selectedSq = [lr, lc];
+      selectedSq      = [lr, lc];
       legalMovesCache = engine.legalMoves(lr, lc);
       renderGame();
       return;
     }
 
-    // Deseleciona
-    selectedSq = null;
+    /* deseleciona */
+    selectedSq      = null;
     legalMovesCache = [];
     renderGame();
     return;
   }
 
-  // Seleciona peça
+  /* seleciona */
   if (piece && piece.color === myColor) {
-    selectedSq = [lr, lc];
+    selectedSq      = [lr, lc];
     legalMovesCache = engine.legalMoves(lr, lc);
     renderGame();
   }
 }
 
 /* ===================================================
-   EXECUTA MOVIMENTO
+   EXECUTAR MOVIMENTO
    =================================================== */
-async function executeMove(from, to, promoteTo = 'Q') {
+async function doMove(from, to, promoteTo = 'Q') {
   const ok = engine.makeMove(from, to, promoteTo);
   if (!ok) return;
 
-  selectedSq = null;
+  selectedSq      = null;
   legalMovesCache = [];
   renderGame();
 
-  // Envia ao Firebase
   try {
     await roomRef.update({ state: engine.serialize() });
   } catch (e) {
     console.error('Erro ao salvar movimento:', e);
   }
 
-  // Verifica fim de jogo
   if (engine.status === 'checkmate') {
-    await roomRef.update({ status: 'finished', winner: myColor });
-    showGameOver('Xeque-mate!', 'Você venceu! Parabéns!');
+    await roomRef.update({ status: 'finished', winner: myColor }).catch(() => {});
     gameActive = false;
+    showGameOver('Xeque-mate! 🏆', 'Você venceu! Parabéns!');
   } else if (engine.status === 'stalemate') {
-    await roomRef.update({ status: 'finished', winner: null });
-    showGameOver('Afogamento!', 'Empate por afogamento.');
+    await roomRef.update({ status: 'finished', winner: null }).catch(() => {});
     gameActive = false;
+    showGameOver('Empate!', 'Afogamento — nenhum movimento legal.');
   }
 }
 
 /* ===================================================
-   PROMOÇÃO DE PEÃO
+   PROMOÇÃO
    =================================================== */
 function showPromotion() {
   const choices = document.getElementById('promotion-choices');
   choices.innerHTML = '';
   const pieces = ['Q','R','B','N'];
-  const labels = { Q: 'Rainha', R: 'Torre', B: 'Bispo', N: 'Cavalo' };
 
   pieces.forEach(type => {
     const btn = document.createElement('button');
     btn.className = 'promotion-choice';
-    btn.title = labels[type];
     btn.textContent = SYMBOLS[myColor + type];
     btn.addEventListener('click', () => {
       hideModal('modal-promotion');
       const { from, to } = pendingPromotion;
-      pendingPromotion = null;
-      selectedSq = null;
-      legalMovesCache = [];
-      executeMove(from, to, type);
+      pendingPromotion   = null;
+      selectedSq         = null;
+      legalMovesCache    = [];
+      doMove(from, to, type);
     });
     choices.appendChild(btn);
   });
@@ -490,23 +548,28 @@ function showPromotion() {
 /* ===================================================
    STATUS BAR
    =================================================== */
-function updateStatus() {
+function updateStatusBar() {
   const bar = document.getElementById('status-bar');
   bar.className = 'status-bar';
 
-  if (!gameActive) return;
+  if (!gameActive && engine.status === 'playing') {
+    bar.textContent = 'Conectando...';
+    return;
+  }
 
-  const msgs = {
-    playing: engine.turn === myColor ? 'Sua vez' : 'Vez do oponente',
-    check: engine.turn === myColor ? '⚠ Xeque! Sua vez' : 'Oponente está em xeque',
-    checkmate: '♟ Xeque-mate!',
-    stalemate: '🤝 Afogamento!'
+  const isMyTurn = engine.turn === myColor;
+
+  const messages = {
+    playing:   isMyTurn ? 'Sua vez' : 'Vez do oponente',
+    check:     isMyTurn ? '⚠ Xeque! Defenda seu rei' : 'Oponente está em xeque',
+    checkmate: 'Xeque-mate!',
+    stalemate: 'Afogamento!'
   };
 
-  bar.textContent = msgs[engine.status] || '';
+  bar.textContent = messages[engine.status] || '';
 
-  if (engine.status === 'check' && engine.turn === myColor) bar.classList.add('check');
-  if (engine.status === 'playing' && engine.turn === myColor) bar.classList.add('your-turn');
+  if (engine.status === 'check' && isMyTurn)    bar.classList.add('check');
+  if (engine.status === 'playing' && isMyTurn)  bar.classList.add('your-turn');
 }
 
 /* ===================================================
@@ -521,5 +584,102 @@ function updateMoveHistory() {
     const row = document.createElement('div');
     row.className = 'move-row';
 
-    const num = document.createElement
+    const num = document.createElement('span');
+    num.className = 'move-num';
+    num.textContent = (Math.floor(i / 2) + 1) + '.';
 
+    const w = document.createElement('span');
+    w.className = 'move-san';
+    w.textContent = moves[i] || '';
+
+    const b = document.createElement('span');
+    b.className = 'move-san';
+    b.textContent = moves[i + 1] || '';
+
+    row.appendChild(num);
+    row.appendChild(w);
+    row.appendChild(b);
+    box.appendChild(row);
+  }
+
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ===================================================
+   PEÇAS CAPTURADAS
+   =================================================== */
+function updateCaptured() {
+  const order = { Q:9, R:5, B:3, N:3, P:1 };
+
+  const render = (color, elId) => {
+    const el = document.getElementById(elId);
+    const pieces = [...engine.captured[color]]
+      .sort((a, b) => (order[b] || 0) - (order[a] || 0))
+      .map(t => SYMBOLS[color === 'w' ? 'b' + t : 'w' + t])
+      .join('');
+    el.textContent = pieces;
+  };
+
+  if (myColor === 'w') {
+    render('w', 'captured-bottom'); /* brancas capturaram pretas → exibe embaixo */
+    render('b', 'captured-top');
+  } else {
+    render('b', 'captured-bottom');
+    render('w', 'captured-top');
+  }
+}
+
+/* ===================================================
+   DESTAQUE DE TURNO NAS CARDS DE JOGADOR
+   =================================================== */
+function updateTurnCards() {
+  const isMyTurn = engine.turn === myColor;
+  document.getElementById('card-bottom').classList.toggle('active-turn',  isMyTurn);
+  document.getElementById('card-top').classList.toggle('active-turn',    !isMyTurn);
+}
+
+/* ===================================================
+   RESIGNAR
+   =================================================== */
+async function resign() {
+  if (!gameActive) return;
+  const ok = confirm('Tem certeza que deseja resignar?');
+  if (!ok) return;
+
+  gameActive = false;
+  const enemy = myColor === 'w' ? 'b' : 'w';
+
+  try {
+    await roomRef.update({
+      status: 'resigned',
+      winner: enemy,
+      state:  engine.serialize()
+    });
+  } catch(e) {
+    console.error(e);
+  }
+
+  showGameOver('Você resignou', 'O oponente venceu a partida.');
+}
+
+/* ===================================================
+   MODAL GAME OVER
+   =================================================== */
+function showGameOver(title, msg) {
+  document.getElementById('gameover-title').textContent = title;
+  document.getElementById('gameover-msg').textContent   = msg;
+
+  const icon = document.getElementById('gameover-icon');
+  if (title.includes('Vitória') || title.includes('Venceu') || title.includes('mate! 🏆')) {
+    icon.textContent = '🏆';
+  } else if (title.includes('Empate')) {
+    icon.textContent = '🤝';
+  } else {
+    icon.textContent = '♟';
+  }
+
+  document.getElementById('btn-resign').classList.add('hidden');
+  document.getElementById('btn-new-game').classList.remove('hidden');
+
+  setTimeout(() => showModal('modal-gameover'), 800);
+}
