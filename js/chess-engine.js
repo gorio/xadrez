@@ -358,14 +358,19 @@ class ChessEngine {
 
   deserialize(data) {
     this.board = data.board.map(row =>
-      row.map(p => p ? { color: p[0], type: p.slice(1) } : null)
+        row.map(p => p ? { color: p[0], type: p.slice(1) } : null)
     );
-    this.turn = data.turn;
+    this.turn     = data.turn     || 'w';
     this.castling = { ...data.castling };
-    this.enPassant = data.enPassant;
-    this.history = [...data.history];
-    this.captured = { w: [...data.captured.w], b: [...data.captured.b] };
-    this.status = data.status;
-    this.lastMove = data.lastMove;
-  }
+    this.enPassant = data.enPassant || null;
+    this.lastMove  = data.lastMove  || null;
+    this.status    = data.status    || 'playing';
+
+    // Firebase converte arrays vazios para null — protege contra isso
+    this.history = Array.isArray(data.history) ? [...data.history] : [];
+    this.captured = {
+        w: Array.isArray(data.captured?.w) ? [...data.captured.w] : [],
+        b: Array.isArray(data.captured?.b) ? [...data.captured.b] : []
+    };
+    }
 }
