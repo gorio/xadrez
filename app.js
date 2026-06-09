@@ -1,1 +1,0 @@
-console.log('Scaffold do projeto de xadrez');
