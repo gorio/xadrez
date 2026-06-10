@@ -41,21 +41,19 @@ let opponentNameGlobal = 'Oponente';
 
 /* replay */
 let replayMoves    = [];
+let replayTarget   = 0;
 let replayIndex    = 0;
 let replayEngine   = null;
 let replayInterval = null;
 let replayGameData = null;
 
 /* =====================================================
-   HELPER — addEventListener seguro contra null
+   HELPER
 ===================================================== */
 function el(id, event, handler) {
   const element = document.getElementById(id);
-  if (element) {
-    element.addEventListener(event, handler);
-  } else {
-    console.warn(`#${id} não encontrado para evento '${event}'`);
-  }
+  if (element) element.addEventListener(event, handler);
+  else console.warn(`#${id} não encontrado`);
 }
 
 /* =====================================================
@@ -66,10 +64,7 @@ window.addEventListener('DOMContentLoaded', () => {
     firebase.initializeApp(FIREBASE_CONFIG);
     db     = firebase.database();
     fbAuth = firebase.auth();
-  } catch (e) {
-    console.error('Firebase init error:', e);
-    return;
-  }
+  } catch (e) { console.error('Firebase init error:', e); return; }
 
   initAuthUI();
   initLobbyUI();
@@ -78,77 +73,58 @@ window.addEventListener('DOMContentLoaded', () => {
   initReplayUI();
 
   fbAuth.onAuthStateChanged(user => {
-  currentUser = user;
-  if (user) {
-    myId = user.uid;
-    const name     = user.displayName || user.email?.split('@')[0] || 'Jogador';
-    const photoURL = user.photoURL || null;
+    currentUser = user;
+    if (user) {
+      myId = user.uid;
+      const name     = user.displayName || user.email?.split('@')[0] || 'Jogador';
+      const photoURL = user.photoURL || null;
 
-    /* Header — nome */
-    const headerName = document.getElementById('header-username');
-    if (headerName) headerName.textContent = name;
+      const headerName = document.getElementById('header-username');
+      if (headerName) headerName.textContent = name;
 
-    /* Header — foto ou iniciais */
-    const headerPhoto    = document.getElementById('header-photo');
-    const headerInitials = document.getElementById('header-initials');
+      const headerPhoto    = document.getElementById('header-photo');
+      const headerInitials = document.getElementById('header-initials');
+      if (photoURL && headerPhoto && headerInitials) {
+        headerPhoto.src = photoURL;
+        headerPhoto.classList.remove('hidden');
+        headerInitials.style.display = 'none';
+      } else if (headerInitials) {
+        headerInitials.style.display = 'flex';
+        headerInitials.textContent = name.split(' ').slice(0,2)
+          .map(w => w[0]?.toUpperCase()||'').join('') || '?';
+      }
 
-    if (photoURL && headerPhoto && headerInitials) {
-      headerPhoto.src = photoURL;
-      headerPhoto.classList.remove('hidden');
-      headerInitials.style.display = 'none';
-    } else if (headerInitials) {
-      headerInitials.style.display = 'flex';
-      /* Iniciais a partir do nome */
-      const initials = name
-        .split(' ')
-        .slice(0, 2)
-        .map(w => w[0]?.toUpperCase() || '')
-        .join('');
-      headerInitials.textContent = initials || '?';
+      db.ref('users/' + user.uid).update({
+        displayName: name, email: user.email||'',
+        photoURL: photoURL||'', lastSeen: Date.now()
+      });
+      window._myPhotoURL = photoURL;
+      showScreen('lobby');
+    } else {
+      const headerPhoto    = document.getElementById('header-photo');
+      const headerInitials = document.getElementById('header-initials');
+      if (headerPhoto)    { headerPhoto.src = ''; headerPhoto.classList.add('hidden'); }
+      if (headerInitials) { headerInitials.style.display = 'flex'; headerInitials.textContent = '?'; }
+      window._myPhotoURL = null;
+      showScreen('auth');
     }
-
-    /* Salvar perfil no Firebase */
-    db.ref('users/' + user.uid).update({
-      displayName: name,
-      email:       user.email || '',
-      photoURL:    photoURL   || '',
-      lastSeen:    Date.now()
-    });
-
-    /* Guardar foto para usar nos cards de jogador */
-    window._myPhotoURL = photoURL;
-
-    showScreen('lobby');
-  } else {
-    /* Limpa avatar ao deslogar */
-    const headerPhoto    = document.getElementById('header-photo');
-    const headerInitials = document.getElementById('header-initials');
-    if (headerPhoto)    { headerPhoto.src = ''; headerPhoto.classList.add('hidden'); }
-    if (headerInitials) { headerInitials.style.display = 'flex'; headerInitials.textContent = '?'; }
-    window._myPhotoURL = null;
-    showScreen('auth');
-  }
-});
+  });
 });
 
 /* =====================================================
-   AUTH — funções de login
+   AUTH
 ===================================================== */
 async function loginWithEmail() {
   const email = document.getElementById('login-email').value.trim();
   const pass  = document.getElementById('login-password').value;
   if (!email || !pass) { showAuthError('Preencha e-mail e senha.'); return; }
-  try {
-    await fbAuth.signInWithEmailAndPassword(email, pass);
-  } catch (e) { showAuthError(authErrorMsg(e.code)); }
+  try { await fbAuth.signInWithEmailAndPassword(email, pass); }
+  catch (e) { showAuthError(authErrorMsg(e.code)); }
 }
 
 async function loginWithGoogle() {
-  try {
-    await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-  } catch (e) {
-    if (e.code !== 'auth/popup-closed-by-user') showAuthError(authErrorMsg(e.code));
-  }
+  try { await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
+  catch (e) { if (e.code !== 'auth/popup-closed-by-user') showAuthError(authErrorMsg(e.code)); }
 }
 
 async function registerWithEmail() {
@@ -165,13 +141,6 @@ async function registerWithEmail() {
   } catch (e) { showAuthError(authErrorMsg(e.code)); }
 }
 
-async function loginAsGuest() {
-  try {
-    const cred = await fbAuth.signInAnonymously();
-    await cred.user.updateProfile({ displayName: 'Visitante' });
-  } catch (e) { showAuthError('Erro ao entrar como visitante.'); }
-}
-
 function authErrorMsg(code) {
   return ({
     'auth/user-not-found':       'Usuário não encontrado.',
@@ -183,14 +152,8 @@ function authErrorMsg(code) {
   })[code] || 'Erro ao autenticar.';
 }
 
-function showAuthError(msg) {
-  const el = document.getElementById('auth-error');
-  if (el) el.textContent = msg;
-}
-function clearAuthError() {
-  const el = document.getElementById('auth-error');
-  if (el) el.textContent = '';
-}
+function showAuthError(msg) { const e = document.getElementById('auth-error'); if (e) e.textContent = msg; }
+function clearAuthError()   { const e = document.getElementById('auth-error'); if (e) e.textContent = ''; }
 
 /* =====================================================
    INIT — Auth UI
@@ -208,387 +171,11 @@ function initAuthUI() {
       clearAuthError();
     });
   });
-
   el('btn-login-email',     'click',   loginWithEmail);
   el('login-password',      'keydown', e => { if (e.key === 'Enter') loginWithEmail(); });
   el('btn-login-google',    'click',   loginWithGoogle);
   el('btn-register',        'click',   registerWithEmail);
   el('btn-register-google', 'click',   loginWithGoogle);
-  // btn-guest removido — autenticação anônima desativada
-}
-
-/* =====================================================
-   REPLAY — carrega partida
-===================================================== */
-async function loadReplay(gameId) {
-  showScreen('replay');
-  try {
-    const snap = await db.ref('games/' + gameId).once('value');
-    replayGameData = snap.val();
-    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
-
-    const isWhite = replayGameData.myColor === 'w';
-    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
-    lbl('replay-label-bottom', isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`);
-    lbl('replay-label-top',    isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`);
-    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
-    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
-
-    replayMoves  = replayGameData.moves ? replayGameData.moves.split('|').filter(Boolean) : [];
-    replayIndex  = 0;
-    replayEngine = new ChessEngine();
-
-    const slider = document.getElementById('replay-slider');
-    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
-
-    buildReplayBoard();
-    replayRenderBoard();
-    renderReplayHistory();
-    updateReplayCounter();
-
-    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
-    lbl('replay-status', `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
-
-  } catch (e) {
-    console.error(e);
-    alert('Erro ao carregar replay.');
-    openHistory();
-  }
-}
-
-/* =====================================================
-   REPLAY — estado
-===================================================== */
-let replayTarget = 0; // posição raw no array (exibida no contador e slider)
-
-/* =====================================================
-   REPLAY — navega manualmente (para o auto-play)
-===================================================== */
-function replayGoTo(idx) {
-  stopReplayAuto();
-  _replayApplyTo(idx);
-}
-
-/* =====================================================
-   REPLAY — Play automático: avança 1 lance/segundo
-   usa variável local `cur` independente de replayIndex
-===================================================== */
-function toggleReplayAuto() {
-  if (replayInterval) {
-    stopReplayAuto();
-    return;
-  }
-
-  /* Se já está no final, reinicia */
-  if (replayTarget >= replayMoves.length) {
-    _replayApplyTo(0);
-  }
-
-  const btn = document.getElementById('replay-play');
-  if (btn) btn.textContent = '⏸ Pausar';
-
-  let cur = replayTarget + 1;   // contador local — não depende de replayIndex
-
-  replayInterval = setInterval(() => {
-    if (cur > replayMoves.length) {
-      stopReplayAuto();
-      return;
-    }
-    _replayApplyTo(cur);
-    cur++;
-  }, 1000);
-}
-
-function stopReplayAuto() {
-  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
-  const btn = document.getElementById('replay-play');
-  if (btn) btn.textContent = '▶ Play';
-}
-
-/* =====================================================
-   REPLAY — contador usa replayTarget (posição raw)
-===================================================== */
-function updateReplayCounter() {
-  const e = document.getElementById('replay-move-counter');
-  if (e) e.textContent = `Lance ${replayTarget} de ${replayMoves.length}`;
-}
-
-/* =====================================================
-   REPLAY — histórico destaca pelo replayTarget (não replayIndex)
-===================================================== */
-function renderReplayHistory() {
-  const box = document.getElementById('replay-move-history');
-  if (!box) return;
-  box.innerHTML = '';
-  for (let i = 0; i < replayMoves.length; i += 2) {
-    const row = document.createElement('div');
-    row.className = 'move-row';
-
-    const num = document.createElement('span');
-    num.className = 'move-num';
-    num.textContent = (Math.floor(i / 2) + 1) + '.';
-
-    const w = document.createElement('span');
-    w.className = 'move-san' + (replayTarget === i + 1 ? ' move-active' : '');
-    w.textContent = replayMoves[i] || '';
-    w.style.cursor = 'pointer';
-    w.addEventListener('click', () => replayGoTo(i + 1));
-
-    const b = document.createElement('span');
-    b.className = 'move-san' + (replayTarget === i + 2 ? ' move-active' : '');
-    b.textContent = replayMoves[i + 1] || '';
-    if (replayMoves[i + 1]) {
-      b.style.cursor = 'pointer';
-      b.addEventListener('click', () => replayGoTo(i + 2));
-    }
-
-    row.appendChild(num); row.appendChild(w); row.appendChild(b);
-    box.appendChild(row);
-  }
-  const active = box.querySelector('.move-active');
-  if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
-
-/* =====================================================
-   REPLAY — inicializa replayTarget ao carregar partida
-===================================================== */
-async function loadReplay(gameId) {
-  showScreen('replay');
-  try {
-    const snap = await db.ref('games/' + gameId).once('value');
-    replayGameData = snap.val();
-    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
-
-    const isWhite = replayGameData.myColor === 'w';
-    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
-    lbl('replay-label-bottom', isWhite
-      ? `${replayGameData.playerName} (Brancas)`
-      : `${replayGameData.playerName} (Pretas)`);
-    lbl('replay-label-top', isWhite
-      ? `${replayGameData.opponentName} (Pretas)`
-      : `${replayGameData.opponentName} (Brancas)`);
-    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
-    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
-
-    replayMoves  = replayGameData.moves
-      ? replayGameData.moves.split('|').filter(Boolean)
-      : [];
-    replayIndex  = 0;
-    replayTarget = 0;
-    replayEngine = new ChessEngine();
-
-    const slider = document.getElementById('replay-slider');
-    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
-
-    buildReplayBoard();
-    replayRenderBoard();
-    renderReplayHistory();
-    updateReplayCounter();
-
-    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
-    lbl('replay-status',
-      `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
-
-  } catch (e) {
-    console.error(e);
-    alert('Erro ao carregar replay.');
-    openHistory();
-  }
-}
-
-/* =====================================================
-   INIT — Replay UI — slider e botões usam replayTarget
-===================================================== */
-function initReplayUI() {
-  el('btn-replay-back', 'click',  openHistory);
-  el('replay-first',    'click',  () => replayGoTo(0));
-  el('replay-prev',     'click',  () => replayGoTo(replayTarget - 1));
-  el('replay-next',     'click',  () => replayGoTo(replayTarget + 1));
-  el('replay-last',     'click',  () => replayGoTo(replayMoves.length));
-  el('replay-play',     'click',  toggleReplayAuto);
-  el('replay-slider',   'input',  e => replayGoTo(parseInt(e.target.value)));
-}
-
-function applyMoveBySAN(eng, san) {
-  if (!san) return false;
-  const color = eng.turn;
-
-  // Normaliza em 4 variantes
-  const strip = s => s.replace(/[+#!?]/g, '').trim();
-  const stripX = s => strip(s).replace(/x/g, '');
-  const stripAll = s => stripX(s).replace(/=/g, '');
-
-  const sanA = strip(san);
-  const sanB = stripX(san);
-  const sanC = stripAll(san);
-
-  // Coleta todos os movimentos legais com seus clones pré-aplicados
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      if (eng.board[r]?.[c]?.color !== color) continue;
-      for (const mv of eng.legalMoves(r, c)) {
-        for (const promo of ['Q', 'R', 'B', 'N']) {
-          const clone = cloneEngine(eng);
-          if (!clone.makeMove([r, c], mv.to, promo)) continue;
-          const gen  = clone.history[clone.history.length - 1] || '';
-          const genA = strip(gen);
-          const genB = stripX(gen);
-          const genC = stripAll(gen);
-          if (genA === sanA || genB === sanB || genC === sanC) {
-            eng.makeMove([r, c], mv.to, promo);
-            return true;
-          }
-        }
-      }
-    }
-  }
-
-  // FALLBACK: tenta deduzir o destino a partir da SAN
-  // Ex: "h6" → coluna h, fileira 6 → [2][7]; "Qe6" → e6 → [2][4]
-  const files = 'abcdefgh';
-  const ranks = '87654321';
-  const dest  = san.replace(/[+#!?=KQRBNPX]/gi, '').slice(-2);
-  if (dest && dest.length === 2) {
-    const fc = files.indexOf(dest[0]);
-    const fr = ranks.indexOf(dest[1]);
-    if (fc !== -1 && fr !== -1) {
-      for (let r = 0; r < 8; r++) {
-        for (let c = 0; c < 8; c++) {
-          if (eng.board[r]?.[c]?.color !== color) continue;
-          for (const mv of eng.legalMoves(r, c)) {
-            if (mv.to[0] === fr && mv.to[1] === fc) {
-              // se há promoção na SAN, usa a peça indicada
-              const promoChar = san.match(/=([QRBN])/)?.[1] || 'Q';
-              if (eng.makeMove([r, c], mv.to, promoChar)) {
-                console.info(`Fallback por destino para "${san}": [${r},${c}]→[${fr},${fc}]`);
-                return true;
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  console.warn(`Lance não reconhecido: "${san}"`);
-  return false;
-}
-
-/* =====================================================
-   REPLAY — aplica até idx, acumulando board correto
-   Não para se um lance falhar — continua tentando
-===================================================== */
-function _replayApplyTo(idx) {
-  idx          = Math.max(0, Math.min(replayMoves.length, idx));
-  replayTarget = idx;
-  replayEngine = new ChessEngine();
-  replayIndex  = 0;
-
-  for (let i = 0; i < idx; i++) {
-    const san = replayMoves[i];
-    if (applyMoveBySAN(replayEngine, san)) {
-      replayIndex++;
-    } else {
-      /* Tenta forçar o lance por coordenada se o engine ainda
-         tiver movimentos legais — mantém pelo menos o turno correto */
-      console.warn(`Lance ${i+1} não reconhecido: "${san}"`);
-    }
-  }
-
-  const slider = document.getElementById('replay-slider');
-  if (slider) slider.value = replayTarget;
-  updateReplayCounter();
-  replayRenderBoard();
-  renderReplayHistory();
-}
-
-function cloneEngine(src) {
-  const dst = new ChessEngine();
-  dst.board     = src.board.map(row => row.map(p => p ? { ...p } : null));
-  dst.turn      = src.turn;
-  dst.castling  = { ...src.castling };
-  dst.enPassant = src.enPassant ? [...src.enPassant] : null;
-  dst.history   = [...src.history];
-  dst.captured  = { w: [...src.captured.w], b: [...src.captured.b] };
-  dst.status    = src.status;
-  dst.lastMove  = src.lastMove
-    ? { from: [...src.lastMove.from], to: [...src.lastMove.to] }
-    : null;
-  return dst;
-}
-
-/* =====================================================
-   REPLAY — construir tabuleiro visual
-===================================================== */
-function buildReplayBoard() {
-  const boardEl = document.getElementById('replay-chessboard');
-  if (!boardEl) return;
-  boardEl.innerHTML = '';
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
-      const sq = document.createElement('div');
-      sq.className = 'square ' + ((row + col) % 2 === 0 ? 'light' : 'dark');
-      sq.dataset.row = row; sq.dataset.col = col;
-      boardEl.appendChild(sq);
-    }
-  }
-}
-
-function replayRenderBoard() {
-  const boardEl = document.getElementById('replay-chessboard');
-  if (!boardEl) return;
-  boardEl.querySelectorAll('.square').forEach(sq => {
-    const vr = parseInt(sq.dataset.row);
-    const vc = parseInt(sq.dataset.col);
-    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
-    sq.innerHTML = '';
-
-    if (replayEngine.lastMove) {
-      const [fr, fc] = replayEngine.lastMove.from;
-      const [tr, tc] = replayEngine.lastMove.to;
-      if ((vr===fr && vc===fc) || (vr===tr && vc===tc)) sq.classList.add('last-move');
-    }
-
-    const piece = replayEngine.piece(vr, vc);
-    if (piece) {
-      const span = document.createElement('span');
-      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
-      span.textContent = SYMBOLS[piece.color + piece.type] || '?';
-      sq.appendChild(span);
-    }
-  });
-}
-
-function renderReplayHistory() {
-  const box = document.getElementById('replay-move-history');
-  if (!box) return;
-  box.innerHTML = '';
-  for (let i = 0; i < replayMoves.length; i += 2) {
-    const row = document.createElement('div');
-    row.className = 'move-row';
-    const num = document.createElement('span');
-    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
-    const w = document.createElement('span');
-    w.className = 'move-san' + (replayIndex === i+1 ? ' move-active' : '');
-    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
-    w.addEventListener('click', () => replayGoTo(i+1));
-    const b = document.createElement('span');
-    b.className = 'move-san' + (replayIndex === i+2 ? ' move-active' : '');
-    b.textContent = replayMoves[i+1] || '';
-    if (replayMoves[i+1]) { b.style.cursor = 'pointer'; b.addEventListener('click', () => replayGoTo(i+2)); }
-    row.appendChild(num); row.appendChild(w); row.appendChild(b);
-    box.appendChild(row);
-  }
-  const active = box.querySelector('.move-active');
-  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
-}
-
-/* =====================================================
-   REPLAY — contador
-===================================================== */
-function updateReplayCounter() {
-  const e = document.getElementById('replay-move-counter');
-  if (e) e.textContent = `Lance ${replayIndex} de ${replayMoves.length}`;
 }
 
 /* =====================================================
@@ -600,9 +187,9 @@ function initLobbyUI() {
   el('btn-create',  'click', createGame);
   el('btn-join',    'click', joinGame);
   el('input-room',  'keydown', e => { if (e.key === 'Enter') joinGame(); });
-  el('btn-spectate',    'click',   spectateGame);
-  el('input-spectate',  'keydown', e => { if (e.key === 'Enter') spectateGame(); });
-  el('btn-start-ai',    'click',   startAIGame);
+  el('btn-spectate',   'click',   spectateGame);
+  el('input-spectate', 'keydown', e => { if (e.key === 'Enter') spectateGame(); });
+  el('btn-start-ai',   'click',   startAIGame);
 
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -642,11 +229,7 @@ function initGameUI() {
   el('btn-resign',    'click', resign);
   el('btn-new-game',  'click', goLobby);
   el('btn-back-lobby','click', () => { if (specRef) { specRef.off(); specRef = null; } goLobby(); });
-
-  el('btn-gameover-new', 'click', () => {
-    hideModal('modal-gameover');
-    if (gameMode === 'ai') startAIGame(); else goLobby();
-  });
+  el('btn-gameover-new',     'click', () => { hideModal('modal-gameover'); if (gameMode==='ai') startAIGame(); else goLobby(); });
   el('btn-gameover-history', 'click', () => { hideModal('modal-gameover'); openHistory(); });
   el('btn-gameover-lobby',   'click', () => { hideModal('modal-gameover'); goLobby(); });
 }
@@ -659,7 +242,7 @@ function initHistoryUI() {
 }
 
 /* =====================================================
-   INIT — Replay UI — aponta botões manuais para replayGoTo
+   INIT — Replay UI
 ===================================================== */
 function initReplayUI() {
   el('btn-replay-back', 'click',  openHistory);
@@ -676,16 +259,14 @@ function initReplayUI() {
 ===================================================== */
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const target = document.getElementById('screen-' + name);
-  if (target) target.classList.add('active');
+  const t = document.getElementById('screen-' + name);
+  if (t) t.classList.add('active');
 }
 function showModal(id) { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); }
 function hideModal(id) { const e = document.getElementById(id); if (e) e.classList.add('hidden'); }
 
 function goLobby() {
-  gameActive  = false;
-  aiThinking  = false;
-  isSpectator = false;
+  gameActive = false; aiThinking = false; isSpectator = false;
   if (roomRef) { roomRef.off(); roomRef = null; }
   if (specRef) { specRef.off(); specRef = null; }
   engine.reset();
@@ -702,40 +283,26 @@ function showLobbyError(msg) { const e = document.getElementById('lobby-error');
 function clearLobbyError()   { const e = document.getElementById('lobby-error'); if (e) e.textContent = ''; }
 
 /* =====================================================
-   SALVAR JOGO NO HISTÓRICO
+   SALVAR JOGO
 ===================================================== */
 async function saveGame(result) {
   if (!currentUser || currentUser.isAnonymous) return null;
-
   const record = {
-    uid:          currentUser.uid,
-    playerName:   currentUser.displayName || 'Jogador',
-    opponentName: opponentNameGlobal,
-    myColor,
-    mode:         gameMode,
-    difficulty:   gameMode === 'ai' ? selectedDiff : null,
-    result,
-    moves:        engine.history.join('|'),
-    totalMoves:   engine.history.length,
-    roomCode:     roomCode || null,
-    playedAt:     Date.now()
+    uid: currentUser.uid, playerName: currentUser.displayName || 'Jogador',
+    opponentName: opponentNameGlobal, myColor, mode: gameMode,
+    difficulty: gameMode === 'ai' ? selectedDiff : null,
+    result, moves: engine.history.join('|'), totalMoves: engine.history.length,
+    roomCode: roomCode || null, playedAt: Date.now()
   };
-
   try {
     const ref = await db.ref('games').push(record);
     await db.ref(`users/${currentUser.uid}/games/${ref.key}`).set({
-      result,
-      mode:         gameMode,
-      playedAt:     record.playedAt,
-      totalMoves:   record.totalMoves,
-      opponentName: opponentNameGlobal,
-      difficulty:   record.difficulty
+      result, mode: gameMode, playedAt: record.playedAt,
+      totalMoves: record.totalMoves, opponentName: opponentNameGlobal,
+      difficulty: record.difficulty
     });
     return ref.key;
-  } catch (e) {
-    console.warn('Erro ao salvar jogo:', e);
-    return null;
-  }
+  } catch (e) { console.warn('Erro ao salvar jogo:', e); return null; }
 }
 
 /* =====================================================
@@ -756,7 +323,6 @@ async function openHistory() {
   try {
     const snap = await db.ref(`users/${currentUser.uid}/games`)
       .orderByChild('playedAt').limitToLast(50).once('value');
-
     const raw = snap.val();
     if (!raw) {
       if (listEl) listEl.innerHTML = '<div class="history-empty">Nenhuma partida ainda.<br>Jogue sua primeira partida!</div>';
@@ -773,21 +339,18 @@ async function openHistory() {
     if (statsEl) statsEl.innerHTML = `
       <span class="stat stat-win">✓ ${wins}</span>
       <span class="stat stat-draw">= ${draws}</span>
-      <span class="stat stat-loss">✗ ${losses}</span>
-    `;
+      <span class="stat stat-loss">✗ ${losses}</span>`;
 
     if (listEl) listEl.innerHTML = '';
     games.forEach(game => {
       const card = document.createElement('div');
       card.className = 'history-card';
-
       const resClass = { win:'result-win', loss:'result-loss', draw:'result-draw', resigned:'result-loss' }[game.result] || '';
       const resText  = { win:'Vitória ✓', loss:'Derrota ✗', draw:'Empate =', resigned:'Resignou' }[game.result] || game.result;
       const modeText = game.mode === 'ai' ? `🤖 IA (${game.difficulty || ''})` : '👥 Multiplayer';
       const date = new Date(game.playedAt).toLocaleDateString('pt-BR', {
         day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'
       });
-
       card.innerHTML = `
         <div class="history-card-left">
           <span class="history-result ${resClass}">${resText}</span>
@@ -800,17 +363,299 @@ async function openHistory() {
         <div class="history-card-right">
           <span class="history-date">${date}</span>
           <button class="btn btn-small btn-secondary">▶ Replay</button>
-        </div>
-      `;
-
+        </div>`;
       card.querySelector('button').addEventListener('click', () => loadReplay(game.id));
       if (listEl) listEl.appendChild(card);
     });
-
   } catch (e) {
     if (listEl) listEl.innerHTML = '<div class="history-empty">Erro ao carregar histórico.</div>';
     console.error(e);
   }
+}
+
+/* =====================================================
+   REPLAY — carrega partida do Firebase
+===================================================== */
+async function loadReplay(gameId) {
+  showScreen('replay');
+  try {
+    const snap = await db.ref('games/' + gameId).once('value');
+    replayGameData = snap.val();
+    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
+
+    const isWhite = replayGameData.myColor === 'w';
+    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+    lbl('replay-label-bottom', isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`);
+    lbl('replay-label-top',    isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`);
+    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
+    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
+
+    replayMoves  = replayGameData.moves ? replayGameData.moves.split('|').filter(Boolean) : [];
+    replayTarget = 0;
+    replayIndex  = 0;
+    replayEngine = new ChessEngine();
+
+    const slider = document.getElementById('replay-slider');
+    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
+
+    buildReplayBoard();
+    replayRenderBoard();
+    renderReplayHistory();
+    updateReplayCounter();
+
+    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
+    lbl('replay-status', `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
+  } catch (e) {
+    console.error(e); alert('Erro ao carregar replay.'); openHistory();
+  }
+}
+
+/* =====================================================
+   REPLAY — navega manualmente (para o auto-play)
+===================================================== */
+function replayGoTo(idx) {
+  stopReplayAuto();
+  _replayApplyTo(idx);
+}
+
+/* =====================================================
+   REPLAY — aplica até idx SEM parar o auto-play
+===================================================== */
+function _replayApplyTo(idx) {
+  idx          = Math.max(0, Math.min(replayMoves.length, idx));
+  replayTarget = idx;
+  replayEngine = new ChessEngine();
+  replayIndex  = 0;
+
+  for (let i = 0; i < idx; i++) {
+    if (applyMoveBySAN(replayEngine, replayMoves[i])) replayIndex++;
+    else console.warn(`Lance ${i+1} não reconhecido: "${replayMoves[i]}"`);
+  }
+
+  const slider = document.getElementById('replay-slider');
+  if (slider) slider.value = replayTarget;
+  updateReplayCounter();
+  replayRenderBoard();
+  renderReplayHistory();
+}
+
+/* =====================================================
+   REPLAY — Play automático com contador local independente
+===================================================== */
+function toggleReplayAuto() {
+  if (replayInterval) { stopReplayAuto(); return; }
+
+  if (replayTarget >= replayMoves.length) _replayApplyTo(0);
+
+  const btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '⏸ Pausar';
+
+  let cur = replayTarget + 1;
+
+  replayInterval = setInterval(() => {
+    if (cur > replayMoves.length) { stopReplayAuto(); return; }
+    _replayApplyTo(cur);
+    cur++;
+  }, 1000);
+}
+
+function stopReplayAuto() {
+  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
+  const btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '▶ Play';
+}
+
+/* =====================================================
+   REPLAY — contador e histórico
+===================================================== */
+function updateReplayCounter() {
+  const e = document.getElementById('replay-move-counter');
+  if (e) e.textContent = `Lance ${replayTarget} de ${replayMoves.length}`;
+}
+
+function renderReplayHistory() {
+  const box = document.getElementById('replay-move-history');
+  if (!box) return;
+  box.innerHTML = '';
+  for (let i = 0; i < replayMoves.length; i += 2) {
+    const row = document.createElement('div');
+    row.className = 'move-row';
+    const num = document.createElement('span');
+    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
+    const w = document.createElement('span');
+    w.className = 'move-san' + (replayTarget === i+1 ? ' move-active' : '');
+    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
+    w.addEventListener('click', () => replayGoTo(i+1));
+    const b = document.createElement('span');
+    b.className = 'move-san' + (replayTarget === i+2 ? ' move-active' : '');
+    b.textContent = replayMoves[i+1] || '';
+    if (replayMoves[i+1]) { b.style.cursor = 'pointer'; b.addEventListener('click', () => replayGoTo(i+2)); }
+    row.appendChild(num); row.appendChild(w); row.appendChild(b);
+    box.appendChild(row);
+  }
+  const active = box.querySelector('.move-active');
+  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
+}
+
+/* =====================================================
+   REPLAY — parser de SAN direto (sem gerar contra-SANs)
+   Decodifica o texto e acha o movimento legal correspondente.
+===================================================== */
+function applyMoveBySAN(eng, san) {
+  if (!san) return false;
+  const color = eng.turn;
+  const FILES = 'abcdefgh';
+  const RANKS = '87654321';
+
+  let s = san.replace(/[+#!?]/g, '').trim();
+
+  /* Roque */
+  if (s === 'O-O-O' || s === '0-0-0') {
+    for (let r = 0; r < 8; r++)
+      for (let c = 0; c < 8; c++) {
+        const p = eng.board[r]?.[c];
+        if (!p || p.color !== color || p.type !== 'K') continue;
+        const mv = eng.legalMoves(r, c).find(m => m.castle === 'Q');
+        if (mv) { eng.makeMove([r,c], mv.to, 'Q'); return true; }
+      }
+    return false;
+  }
+  if (s === 'O-O' || s === '0-0') {
+    for (let r = 0; r < 8; r++)
+      for (let c = 0; c < 8; c++) {
+        const p = eng.board[r]?.[c];
+        if (!p || p.color !== color || p.type !== 'K') continue;
+        const mv = eng.legalMoves(r, c).find(m => m.castle === 'K');
+        if (mv) { eng.makeMove([r,c], mv.to, 'Q'); return true; }
+      }
+    return false;
+  }
+
+  /* Promoção */
+  let promoType = 'Q';
+  const promoMatch = s.match(/=([QRBN])
+$
+/);
+  if (promoMatch) { promoType = promoMatch[1]; s = s.slice(0, -2); }
+
+  /* Casa de destino (últimas 2 letras) */
+  if (s.length < 2) return false;
+  const destStr = s.slice(-2);
+  const toCol   = FILES.indexOf(destStr[0]);
+  const toRow   = RANKS.indexOf(destStr[1]);
+  if (toCol === -1 || toRow === -1) return false;
+  s = s.slice(0, -2);
+
+  /* Remove 'x' de captura */
+  s = s.replace('x', '');
+
+  /* Tipo de peça */
+  let pieceType = 'P';
+  if (s.length > 0 && 'KQRBN'.includes(s[0])) { pieceType = s[0]; s = s.slice(1); }
+
+  /* Desambiguação */
+  const disambig = s;
+
+  /* Procura o movimento legal */
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = eng.board[r]?.[c];
+      if (!p || p.color !== color || p.type !== pieceType) continue;
+
+      if (disambig.length === 2) {
+        if (FILES[c] !== disambig[0] || RANKS[r] !== disambig[1]) continue;
+      } else if (disambig.length === 1) {
+        if ('abcdefgh'.includes(disambig)) {
+          if (FILES[c] !== disambig) continue;
+        } else {
+          if (RANKS[r] !== disambig) continue;
+        }
+      }
+
+      const legal = eng.legalMoves(r, c);
+      const mv    = legal.find(m => m.to[0] === toRow && m.to[1] === toCol);
+      if (mv) { eng.makeMove([r,c], [toRow, toCol], promoType); return true; }
+    }
+  }
+
+  console.warn(`SAN não resolvida: "${san}"`);
+  return false;
+}
+
+/* =====================================================
+   REPLAY — clone do engine
+===================================================== */
+function cloneEngine(src) {
+  const dst = new ChessEngine();
+  dst.board     = src.board.map(row => row.map(p => p ? {...p} : null));
+  dst.turn      = src.turn;
+  dst.castling  = { ...src.castling };
+  dst.enPassant = src.enPassant ? [...src.enPassant] : null;
+  dst.history   = [...src.history];
+  dst.captured  = { w: [...src.captured.w], b: [...src.captured.b] };
+  dst.status    = src.status;
+  dst.lastMove  = src.lastMove
+    ? { from: [...src.lastMove.from], to: [...src.lastMove.to] }
+    : null;
+  return dst;
+}
+
+/* =====================================================
+   REPLAY — tabuleiro visual
+===================================================== */
+function buildReplayBoard() {
+  const boardEl = document.getElementById('replay-chessboard');
+  if (!boardEl) return;
+  boardEl.innerHTML = '';
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const sq = document.createElement('div');
+      sq.className = 'square ' + ((row + col) % 2 === 0 ? 'light' : 'dark');
+      sq.dataset.row = row; sq.dataset.col = col;
+      boardEl.appendChild(sq);
+    }
+  }
+  ['replay-coords-file-top','replay-coords-file-bottom'].forEach(id => {
+    const el = document.getElementById(id); if (!el) return;
+    el.innerHTML = '';
+    'abcdefgh'.split('').forEach(f => {
+      const s = document.createElement('span');
+      s.className = 'coord-label'; s.style.width = 'calc(var(--board-size)/8)';
+      s.textContent = f; el.appendChild(s);
+    });
+  });
+  ['replay-coords-rank-left','replay-coords-rank-right'].forEach(id => {
+    const el = document.getElementById(id); if (!el) return;
+    el.innerHTML = '';
+    '87654321'.split('').forEach(r => {
+      const s = document.createElement('span');
+      s.className = 'coord-label'; s.style.height = 'calc(var(--board-size)/8)';
+      s.textContent = r; el.appendChild(s);
+    });
+  });
+}
+
+function replayRenderBoard() {
+  const boardEl = document.getElementById('replay-chessboard');
+  if (!boardEl) return;
+  boardEl.querySelectorAll('.square').forEach(sq => {
+    const vr = parseInt(sq.dataset.row);
+    const vc = parseInt(sq.dataset.col);
+    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
+    sq.innerHTML = '';
+    if (replayEngine.lastMove) {
+      const [fr, fc] = replayEngine.lastMove.from;
+      const [tr, tc] = replayEngine.lastMove.to;
+      if ((vr===fr && vc===fc) || (vr===tr && vc===tc)) sq.classList.add('last-move');
+    }
+    const piece = replayEngine.piece(vr, vc);
+    if (piece) {
+      const span = document.createElement('span');
+      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
+      span.textContent = SYMBOLS[piece.color + piece.type] || '?';
+      sq.appendChild(span);
+    }
+  });
 }
 
 /* =====================================================
@@ -821,37 +666,29 @@ async function spectateGame() {
   const code  = input ? input.value.trim().toUpperCase() : '';
   clearLobbyError();
   if (code.length !== 6) { showLobbyError('Código deve ter 6 caracteres.'); return; }
-
   try {
     const snap = await db.ref('rooms/' + code).once('value');
     const data = snap.val();
-    if (!data)                    { showLobbyError('Sala não encontrada.'); return; }
+    if (!data)                     { showLobbyError('Sala não encontrada.'); return; }
     if (data.status === 'waiting') { showLobbyError('Partida ainda não começou.'); return; }
     if (['finished','resigned'].includes(data.status)) { showLobbyError('Partida já encerrou.'); return; }
 
     isSpectator = true; roomCode = code; myColor = 'w';
     engine.deserialize(data.state);
-
     const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
-    lbl('label-top',     data.blackName || 'Pretas');
-    lbl('label-bottom',  data.whiteName || 'Brancas');
-    lbl('avatar-top',    '♟');
-    lbl('avatar-bottom', '♙');
-
+    lbl('label-top',    data.blackName || 'Pretas');
+    lbl('label-bottom', data.whiteName || 'Brancas');
+    lbl('avatar-top',   '♟'); lbl('avatar-bottom', '♙');
     buildBoard(); renderGame(); showScreen('game');
-
     const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
     const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
-    hide('btn-resign'); hide('btn-new-game');
-    show('btn-back-lobby'); show('spectator-bar');
+    hide('btn-resign'); hide('btn-new-game'); show('btn-back-lobby'); show('spectator-bar');
     lbl('status-bar', `👁 Assistindo — sala ${code}`);
-
     specRef = db.ref('rooms/' + code);
     specRef.on('value', snap => {
       const d = snap.val(); if (!d) return;
       engine.deserialize(d.state); renderGame();
-      const turn = d.state?.turn === 'w' ? 'Brancas' : 'Pretas';
-      lbl('status-bar', `👁 ${turn} jogam — sala ${code}`);
+      lbl('status-bar', `👁 ${d.state?.turn==='w'?'Brancas':'Pretas'} jogam — sala ${code}`);
       if (['finished','resigned','abandoned'].includes(d.status)) {
         lbl('status-bar', '👁 Partida encerrada'); specRef.off();
       }
@@ -860,7 +697,7 @@ async function spectateGame() {
 }
 
 /* =====================================================
-   CRIAR PARTIDA
+   CRIAR / ENTRAR NA PARTIDA
 ===================================================== */
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -877,21 +714,17 @@ async function createGame() {
     roomCode = generateRoomCode(); myColor = 'w'; engine.reset();
     roomRef  = db.ref('rooms/' + roomCode);
     const myName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Jogador';
-
     await roomRef.set({
       white: myId, whiteName: myName, black: null, blackName: null,
       state: engine.serialize(), createdAt: Date.now(), status: 'waiting'
     });
-
     setTimeout(() => {
       if (!roomRef) return;
-      roomRef.once('value', snap => { if (snap.val()?.status === 'waiting') { roomRef.remove(); goLobby(); } });
+      roomRef.once('value', snap => { if (snap.val()?.status==='waiting') { roomRef.remove(); goLobby(); } });
     }, 600000);
-
     const drc = document.getElementById('display-room-code');
     if (drc) drc.textContent = roomCode;
     showScreen('waiting');
-
     roomRef.on('value', snap => {
       const data = snap.val(); if (!data) return;
       if (data.black && data.status === 'playing') {
@@ -904,30 +737,23 @@ async function createGame() {
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Criar Partida'; } }
 }
 
-/* =====================================================
-   ENTRAR NA PARTIDA
-===================================================== */
 async function joinGame() {
   const input = document.getElementById('input-room');
   const code  = input ? input.value.trim().toUpperCase() : '';
   clearLobbyError();
   if (code.length !== 6) { showLobbyError('Código deve ter 6 caracteres.'); return; }
-
   const btn = document.getElementById('btn-join');
   if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
-
   try {
     roomRef = db.ref('rooms/' + code);
     const snap = await roomRef.once('value');
     const data = snap.val();
-    if (!data)                                          { showLobbyError('Sala não encontrada.');  roomRef=null; return; }
-    if (data.black)                                     { showLobbyError('Sala já está cheia.');   roomRef=null; return; }
+    if (!data)                                         { showLobbyError('Sala não encontrada.');  roomRef=null; return; }
+    if (data.black)                                    { showLobbyError('Sala já está cheia.');   roomRef=null; return; }
     if (['finished','resigned'].includes(data.status)) { showLobbyError('Partida já encerrada.'); roomRef=null; return; }
-
     roomCode = code; myColor = 'b'; engine.deserialize(data.state);
     const myName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Jogador';
     await roomRef.update({ black: myId, blackName: myName, status: 'playing' });
-
     opponentNameGlobal = data.whiteName || 'Oponente';
     startMultiplayerGame(myName, opponentNameGlobal);
   } catch (e) { showLobbyError('Erro ao entrar: ' + e.message); roomRef = null; }
@@ -947,7 +773,7 @@ function copyRoomCode() {
 }
 
 /* =====================================================
-   HELPER — preenche card de jogador com foto ou símbolo
+   HELPER — card de jogador
 ===================================================== */
 function setPlayerCard(avatarId, labelId, label, photoURL, symbol) {
   const avatarEl = document.getElementById(avatarId);
@@ -955,146 +781,90 @@ function setPlayerCard(avatarId, labelId, label, photoURL, symbol) {
   if (labelEl) labelEl.textContent = label;
   if (!avatarEl) return;
   if (photoURL) {
-    avatarEl.innerHTML = `<img
-      src="${photoURL}"
-      alt="${label}"
+    avatarEl.innerHTML = `<img src="${photoURL}" alt="${label}"
       style="width:100%;height:100%;object-fit:cover;border-radius:6px;"
-      onerror="this.parentElement.innerHTML='${symbol}'"
-    />`;
+      onerror="this.parentElement.innerHTML='${symbol}'" />`;
   } else {
     avatarEl.textContent = symbol;
   }
 }
 
 /* =====================================================
-   INICIAR MULTIPLAYER
+   MULTIPLAYER
 ===================================================== */
 function startMultiplayerGame(myName, oppName) {
-  gameMode    = 'multiplayer';
-  gameActive  = true;
-  isSpectator = false;
-  selectedSq  = null;
-  legalMovesCache = [];
-
-  const myPhoto = window._myPhotoURL || null;
-  const mySymbol  = myColor === 'w' ? '♙' : '♟';
-  const oppSymbol = myColor === 'w' ? '♟' : '♙';
-  const myLabel   = `${myName} (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
-  const oppLabel  = `${oppName} (${myColor === 'w' ? 'Pretas' : 'Brancas'})`;
-
-  setPlayerCard('avatar-bottom', 'label-bottom', myLabel,  myPhoto, mySymbol);
-  setPlayerCard('avatar-top',    'label-top',    oppLabel, null,    oppSymbol);
-
-  buildBoard();
-  renderGame();
-  showScreen('game');
-
-  const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
-  const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
-  show('btn-resign');
-  hide('btn-new-game');
-  hide('btn-back-lobby');
-  hide('spectator-bar');
+  gameMode = 'multiplayer'; gameActive = true; isSpectator = false;
+  selectedSq = null; legalMovesCache = [];
+  const myPhoto   = window._myPhotoURL || null;
+  const mySymbol  = myColor==='w' ? '♙' : '♟';
+  const oppSymbol = myColor==='w' ? '♟' : '♙';
+  setPlayerCard('avatar-bottom','label-bottom',`${myName} (${myColor==='w'?'Brancas':'Pretas'})`,myPhoto,mySymbol);
+  setPlayerCard('avatar-top',   'label-top',   `${oppName} (${myColor==='w'?'Pretas':'Brancas'})`,null,oppSymbol);
+  buildBoard(); renderGame(); showScreen('game');
+  const show = id => { const e=document.getElementById(id); if(e) e.classList.remove('hidden'); };
+  const hide = id => { const e=document.getElementById(id); if(e) e.classList.add('hidden'); };
+  show('btn-resign'); hide('btn-new-game'); hide('btn-back-lobby'); hide('spectator-bar');
 
   roomRef.on('value', snap => {
-    const data = snap.val();
-    if (!data) return;
-
-    if (data.status === 'resigned' && data.winner !== myColor) {
-      engine.deserialize(data.state);
-      renderGame();
-      gameActive = false;
-      saveGame('win');
-      showGameOver('Vitória! 🏆', 'O oponente resignou.');
-      return;
+    const data = snap.val(); if (!data) return;
+    if (data.status==='resigned' && data.winner!==myColor) {
+      engine.deserialize(data.state); renderGame(); gameActive=false;
+      saveGame('win'); showGameOver('Vitória! 🏆','O oponente resignou.'); return;
     }
-
-    if (data.status === 'abandoned') {
-      gameActive = false;
-      saveGame('win');
-      showGameOver('Vitória! 🏆', 'O oponente abandonou.');
-      return;
+    if (data.status==='abandoned') {
+      gameActive=false; saveGame('win');
+      showGameOver('Vitória! 🏆','O oponente abandonou.'); return;
     }
-
-    if (data.state && data.state.turn === myColor) {
-      engine.deserialize(data.state);
-      renderGame();
-      if (engine.status === 'checkmate') {
-        gameActive = false;
-        saveGame('loss');
-        showGameOver('Xeque-mate!', 'Você perdeu. Tente novamente!');
-      } else if (engine.status === 'stalemate') {
-        gameActive = false;
-        saveGame('draw');
-        showGameOver('Empate!', 'Afogamento.');
+    if (data.state && data.state.turn===myColor) {
+      engine.deserialize(data.state); renderGame();
+      if (engine.status==='checkmate') {
+        gameActive=false; saveGame('loss'); showGameOver('Xeque-mate!','Você perdeu. Tente novamente!');
+      } else if (engine.status==='stalemate') {
+        gameActive=false; saveGame('draw'); showGameOver('Empate!','Afogamento.');
       }
     }
   });
 }
 
 /* =====================================================
-   MODO VS IA
+   VS IA
 ===================================================== */
 function startAIGame() {
   gameMode = 'ai';
-
   let playerColor = selectedPlayerColor;
-  if (playerColor === 'random') playerColor = Math.random() < 0.5 ? 'w' : 'b';
-  myColor = playerColor;
-  aiColor = playerColor === 'w' ? 'b' : 'w';
-
+  if (playerColor==='random') playerColor = Math.random()<0.5?'w':'b';
+  myColor = playerColor; aiColor = playerColor==='w'?'b':'w';
   ai.setDifficulty(selectedDiff);
   engine.reset();
-  gameActive  = true;
-  isSpectator = false;
-  selectedSq  = null;
-  legalMovesCache = [];
+  gameActive=true; isSpectator=false; selectedSq=null; legalMovesCache=[];
   opponentNameGlobal = `IA (${selectedDiff})`;
-
-  const diffLabels = {
-    iniciante:     'Iniciante',
-    intermediario: 'Intermediário',
-    avancado:      'Avançado',
-    expert:        'Expert'
-  };
-
+  const diffLabels = { iniciante:'Iniciante', intermediario:'Intermediário', avancado:'Avançado', expert:'Expert' };
   const myPhoto  = window._myPhotoURL || null;
-  const mySymbol = myColor === 'w' ? '♙' : '♟';
-  const myLabel  = `Você (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
-  const aiLabel  = `IA — ${diffLabels[selectedDiff]}`;
-
-  setPlayerCard('avatar-bottom', 'label-bottom', myLabel, myPhoto, mySymbol);
-  setPlayerCard('avatar-top',    'label-top',    aiLabel, null,    '🤖');
-
-  buildBoard();
-  renderGame();
-  showScreen('game');
-
-  const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
-  const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
-  show('btn-resign');
-  hide('btn-new-game');
-  hide('btn-back-lobby');
-  hide('spectator-bar');
-
-  if (engine.turn === aiColor) scheduleAIMove();
+  const mySymbol = myColor==='w'?'♙':'♟';
+  setPlayerCard('avatar-bottom','label-bottom',`Você (${myColor==='w'?'Brancas':'Pretas'})`,myPhoto,mySymbol);
+  setPlayerCard('avatar-top',   'label-top',   `IA — ${diffLabels[selectedDiff]}`,null,'🤖');
+  buildBoard(); renderGame(); showScreen('game');
+  const show = id => { const e=document.getElementById(id); if(e) e.classList.remove('hidden'); };
+  const hide = id => { const e=document.getElementById(id); if(e) e.classList.add('hidden'); };
+  show('btn-resign'); hide('btn-new-game'); hide('btn-back-lobby'); hide('spectator-bar');
+  if (engine.turn===aiColor) scheduleAIMove();
 }
 
 function scheduleAIMove() {
-  if (!gameActive || engine.turn !== aiColor) return;
-  aiThinking = true; updateStatusBar();
-  const delay = selectedDiff === 'expert' ? 900 : 450;
+  if (!gameActive || engine.turn!==aiColor) return;
+  aiThinking=true; updateStatusBar();
+  const delay = selectedDiff==='expert'?900:450;
   setTimeout(() => {
     if (!gameActive) return;
     const move = ai.getBestMove(engine);
-    aiThinking = false;
+    aiThinking=false;
     if (move) {
-      engine.makeMove(move.from, move.to, move.promoteTo || 'Q');
-      selectedSq = null; legalMovesCache = []; renderGame();
-      if (engine.status === 'checkmate') {
-        gameActive = false; saveGame('loss'); showGameOver('Xeque-mate!', 'A IA venceu. Tente novamente!');
-      } else if (engine.status === 'stalemate') {
-        gameActive = false; saveGame('draw'); showGameOver('Empate!', 'Afogamento.');
+      engine.makeMove(move.from, move.to, move.promoteTo||'Q');
+      selectedSq=null; legalMovesCache=[]; renderGame();
+      if (engine.status==='checkmate') {
+        gameActive=false; saveGame('loss'); showGameOver('Xeque-mate!','A IA venceu. Tente novamente!');
+      } else if (engine.status==='stalemate') {
+        gameActive=false; saveGame('draw'); showGameOver('Empate!','Afogamento.');
       }
     }
   }, delay);
@@ -1107,42 +877,38 @@ function buildBoard() {
   const boardEl = document.getElementById('chessboard');
   if (!boardEl) return;
   boardEl.innerHTML = '';
-
-  const files = myColor === 'w' ? ['a','b','c','d','e','f','g','h'] : ['h','g','f','e','d','c','b','a'];
-  const ranks = myColor === 'w' ? ['8','7','6','5','4','3','2','1'] : ['1','2','3','4','5','6','7','8'];
-
+  const files = myColor==='w'?['a','b','c','d','e','f','g','h']:['h','g','f','e','d','c','b','a'];
+  const ranks = myColor==='w'?['8','7','6','5','4','3','2','1']:['1','2','3','4','5','6','7','8'];
   ['coords-file-top','coords-file-bottom'].forEach(id => {
     const el = document.getElementById(id); if (!el) return;
     el.innerHTML = '';
     files.forEach(f => {
       const s = document.createElement('span');
-      s.className = 'coord-label'; s.style.width = 'calc(var(--board-size) / 8)';
-      s.textContent = f; el.appendChild(s);
+      s.className='coord-label'; s.style.width='calc(var(--board-size)/8)';
+      s.textContent=f; el.appendChild(s);
     });
   });
-
   ['coords-rank-left','coords-rank-right'].forEach(id => {
     const el = document.getElementById(id); if (!el) return;
     el.innerHTML = '';
     ranks.forEach(r => {
       const s = document.createElement('span');
-      s.className = 'coord-label'; s.style.height = 'calc(var(--board-size) / 8)';
-      s.textContent = r; el.appendChild(s);
+      s.className='coord-label'; s.style.height='calc(var(--board-size)/8)';
+      s.textContent=r; el.appendChild(s);
     });
   });
-
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
+  for (let row=0; row<8; row++) {
+    for (let col=0; col<8; col++) {
       const sq = document.createElement('div');
-      sq.className = 'square'; sq.dataset.row = row; sq.dataset.col = col;
+      sq.className='square'; sq.dataset.row=row; sq.dataset.col=col;
       if (!isSpectator) sq.addEventListener('click', onSquareClick);
       boardEl.appendChild(sq);
     }
   }
 }
 
-function viewToLogic(vr, vc) { return myColor === 'w' ? [vr, vc] : [7-vr, 7-vc]; }
-function logicToView(lr, lc) { return myColor === 'w' ? [lr, lc] : [7-lr, 7-lc]; }
+function viewToLogic(vr, vc) { return myColor==='w'?[vr,vc]:[7-vr,7-vc]; }
+function logicToView(lr, lc) { return myColor==='w'?[lr,lc]:[7-lr,7-lc]; }
 
 /* =====================================================
    RENDERIZAÇÃO
@@ -1151,39 +917,35 @@ function renderGame() {
   document.querySelectorAll('#chessboard .square').forEach(sq => {
     const vr = parseInt(sq.dataset.row);
     const vc = parseInt(sq.dataset.col);
-    const [lr, lc] = viewToLogic(vr, vc);
-    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
+    const [lr,lc] = viewToLogic(vr,vc);
+    sq.className = 'square ' + ((vr+vc)%2===0?'light':'dark');
     sq.innerHTML = '';
-
     if (engine.lastMove) {
-      const [fvr, fvc] = logicToView(...engine.lastMove.from);
-      const [tvr, tvc] = logicToView(...engine.lastMove.to);
-      if ((vr===fvr && vc===fvc) || (vr===tvr && vc===tvc)) sq.classList.add('last-move');
+      const [fvr,fvc] = logicToView(...engine.lastMove.from);
+      const [tvr,tvc] = logicToView(...engine.lastMove.to);
+      if ((vr===fvr&&vc===fvc)||(vr===tvr&&vc===tvc)) sq.classList.add('last-move');
     }
-
-    const piece = engine.piece(lr, lc);
+    const piece = engine.piece(lr,lc);
     if (piece) {
       const span = document.createElement('span');
-      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
-      span.textContent = SYMBOLS[piece.color + piece.type] || '?';
+      span.className = 'piece '+(piece.color==='w'?'piece-white':'piece-black');
+      span.textContent = SYMBOLS[piece.color+piece.type]||'?';
       sq.appendChild(span);
-      if (piece.type==='K' && piece.color===engine.turn && engine.status==='check')
+      if (piece.type==='K'&&piece.color===engine.turn&&engine.status==='check')
         sq.classList.add('in-check');
     }
   });
-
-  if (selectedSq !== null) {
-    const [slr, slc] = selectedSq;
-    const [svr, svc] = logicToView(slr, slc);
+  if (selectedSq!==null) {
+    const [slr,slc] = selectedSq;
+    const [svr,svc] = logicToView(slr,slc);
     const sel = document.querySelector(`#chessboard [data-row="${svr}"][data-col="${svc}"]`);
     if (sel) sel.classList.add('selected');
     legalMovesCache.forEach(m => {
-      const [mvr, mvc] = logicToView(m.to[0], m.to[1]);
+      const [mvr,mvc] = logicToView(m.to[0],m.to[1]);
       const el = document.querySelector(`#chessboard [data-row="${mvr}"][data-col="${mvc}"]`);
-      if (el) el.classList.add(engine.piece(m.to[0], m.to[1]) || m.enPassant ? 'capture-hint' : 'move-hint');
+      if (el) el.classList.add(engine.piece(m.to[0],m.to[1])||m.enPassant?'capture-hint':'move-hint');
     });
   }
-
   updateStatusBar(); updateMoveHistory(); updateCaptured(); updateTurnCards();
 }
 
@@ -1194,60 +956,53 @@ function onSquareClick(e) {
   const sq = e.currentTarget;
   const vr = parseInt(sq.dataset.row);
   const vc = parseInt(sq.dataset.col);
-  const [lr, lc] = viewToLogic(vr, vc);
-
-  if (!gameActive || isSpectator || aiThinking) return;
-  if (engine.turn !== myColor) return;
+  const [lr,lc] = viewToLogic(vr,vc);
+  if (!gameActive||isSpectator||aiThinking) return;
+  if (engine.turn!==myColor) return;
   if (['checkmate','stalemate'].includes(engine.status)) return;
-
-  const piece = engine.piece(lr, lc);
-
-  if (selectedSq !== null) {
-    const [slr, slc] = selectedSq;
-    const move = legalMovesCache.find(m => m.to[0]===lr && m.to[1]===lc);
+  const piece = engine.piece(lr,lc);
+  if (selectedSq!==null) {
+    const [slr,slc] = selectedSq;
+    const move = legalMovesCache.find(m=>m.to[0]===lr&&m.to[1]===lc);
     if (move) {
-      if (engine.board[slr][slc]?.type==='P' && (lr===0 || lr===7)) {
-        pendingPromotion = { from:[slr,slc], to:[lr,lc] }; showPromotion(); return;
+      if (engine.board[slr][slc]?.type==='P'&&(lr===0||lr===7)) {
+        pendingPromotion={from:[slr,slc],to:[lr,lc]}; showPromotion(); return;
       }
-      doMove([slr,slc], [lr,lc]); return;
+      doMove([slr,slc],[lr,lc]); return;
     }
-    if (piece && piece.color === myColor) {
-      selectedSq = [lr,lc]; legalMovesCache = engine.legalMoves(lr,lc); renderGame(); return;
+    if (piece&&piece.color===myColor) {
+      selectedSq=[lr,lc]; legalMovesCache=engine.legalMoves(lr,lc); renderGame(); return;
     }
-    selectedSq = null; legalMovesCache = []; renderGame(); return;
+    selectedSq=null; legalMovesCache=[]; renderGame(); return;
   }
-
-  if (piece && piece.color === myColor) {
-    selectedSq = [lr,lc]; legalMovesCache = engine.legalMoves(lr,lc); renderGame();
+  if (piece&&piece.color===myColor) {
+    selectedSq=[lr,lc]; legalMovesCache=engine.legalMoves(lr,lc); renderGame();
   }
 }
 
 /* =====================================================
    EXECUTAR MOVIMENTO
 ===================================================== */
-async function doMove(from, to, promoteTo = 'Q') {
-  if (!engine.makeMove(from, to, promoteTo)) return;
-  selectedSq = null; legalMovesCache = []; renderGame();
-
-  if (gameMode === 'multiplayer' && roomRef) {
+async function doMove(from, to, promoteTo='Q') {
+  if (!engine.makeMove(from,to,promoteTo)) return;
+  selectedSq=null; legalMovesCache=[]; renderGame();
+  if (gameMode==='multiplayer'&&roomRef) {
     try { await roomRef.update({ state: engine.serialize() }); }
     catch (e) { console.error('Erro ao salvar movimento:', e); }
   }
-
-  if (engine.status === 'checkmate') {
-    if (gameMode === 'multiplayer' && roomRef)
+  if (engine.status==='checkmate') {
+    if (gameMode==='multiplayer'&&roomRef)
       await roomRef.update({ status:'finished', winner:myColor }).catch(()=>{});
-    gameActive = false; saveGame('win');
-    showGameOver('Xeque-mate! 🏆', 'Você venceu! Parabéns!'); return;
+    gameActive=false; saveGame('win');
+    showGameOver('Xeque-mate! 🏆','Você venceu! Parabéns!'); return;
   }
-  if (engine.status === 'stalemate') {
-    if (gameMode === 'multiplayer' && roomRef)
+  if (engine.status==='stalemate') {
+    if (gameMode==='multiplayer'&&roomRef)
       await roomRef.update({ status:'finished', winner:null }).catch(()=>{});
-    gameActive = false; saveGame('draw');
-    showGameOver('Empate!', 'Afogamento — nenhum movimento legal.'); return;
+    gameActive=false; saveGame('draw');
+    showGameOver('Empate!','Afogamento — nenhum movimento legal.'); return;
   }
-
-  if (gameMode === 'ai' && engine.turn === aiColor) scheduleAIMove();
+  if (gameMode==='ai'&&engine.turn===aiColor) scheduleAIMove();
 }
 
 /* =====================================================
@@ -1259,13 +1014,13 @@ function showPromotion() {
   choices.innerHTML = '';
   ['Q','R','B','N'].forEach(type => {
     const btn = document.createElement('button');
-    btn.className = 'promotion-choice';
-    btn.textContent = SYMBOLS[myColor + type];
+    btn.className='promotion-choice';
+    btn.textContent=SYMBOLS[myColor+type];
     btn.addEventListener('click', () => {
       hideModal('modal-promotion');
-      const { from, to } = pendingPromotion;
-      pendingPromotion = null; selectedSq = null; legalMovesCache = [];
-      doMove(from, to, type);
+      const {from,to} = pendingPromotion;
+      pendingPromotion=null; selectedSq=null; legalMovesCache=[];
+      doMove(from,to,type);
     });
     choices.appendChild(btn);
   });
@@ -1278,19 +1033,17 @@ function showPromotion() {
 function updateStatusBar() {
   const bar = document.getElementById('status-bar');
   if (!bar) return;
-  bar.className = 'status-bar';
-
-  if (isSpectator) { bar.textContent = `👁 Assistindo — ${engine.turn === 'w' ? 'Brancas' : 'Pretas'} jogam`; return; }
-  if (aiThinking)  { bar.innerHTML = 'IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>'; return; }
-
-  const isMyTurn = engine.turn === myColor;
+  bar.className='status-bar';
+  if (isSpectator) { bar.textContent=`👁 Assistindo — ${engine.turn==='w'?'Brancas':'Pretas'} jogam`; return; }
+  if (aiThinking)  { bar.innerHTML='IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>'; return; }
+  const isMyTurn = engine.turn===myColor;
   const msgs = {
-    playing:   isMyTurn ? 'Sua vez' : (gameMode==='ai' ? 'IA pensando...' : 'Vez do oponente'),
-    check:     isMyTurn ? '⚠ Xeque! Defenda seu rei' : 'Oponente está em xeque',
+    playing:   isMyTurn?'Sua vez':(gameMode==='ai'?'IA pensando...':'Vez do oponente'),
+    check:     isMyTurn?'⚠ Xeque! Defenda seu rei':'Oponente está em xeque',
     checkmate: 'Xeque-mate!',
     stalemate: 'Afogamento!'
   };
-  bar.textContent = msgs[engine.status] || '';
+  bar.textContent = msgs[engine.status]||'';
   if (engine.status==='check'   && isMyTurn) bar.classList.add('check');
   if (engine.status==='playing' && isMyTurn) bar.classList.add('your-turn');
 }
@@ -1301,17 +1054,16 @@ function updateStatusBar() {
 function updateMoveHistory() {
   const box = document.getElementById('move-history');
   if (!box) return;
-  box.innerHTML = '';
-  for (let i = 0; i < engine.history.length; i += 2) {
-    const row = document.createElement('div');
-    row.className = 'move-row';
-    const num = document.createElement('span'); num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
-    const w = document.createElement('span'); w.className = 'move-san'; w.textContent = engine.history[i] || '';
-    const b = document.createElement('span'); b.className = 'move-san'; b.textContent = engine.history[i+1] || '';
+  box.innerHTML='';
+  for (let i=0; i<engine.history.length; i+=2) {
+    const row=document.createElement('div'); row.className='move-row';
+    const num=document.createElement('span'); num.className='move-num'; num.textContent=(Math.floor(i/2)+1)+'.';
+    const w=document.createElement('span'); w.className='move-san'; w.textContent=engine.history[i]||'';
+    const b=document.createElement('span'); b.className='move-san'; b.textContent=engine.history[i+1]||'';
     row.appendChild(num); row.appendChild(w); row.appendChild(b);
     box.appendChild(row);
   }
-  box.scrollTop = box.scrollHeight;
+  box.scrollTop=box.scrollHeight;
 }
 
 /* =====================================================
@@ -1322,31 +1074,31 @@ function updateCaptured() {
   const render = (capturedColor, elId) => {
     const el = document.getElementById(elId); if (!el) return;
     const pieces = [...engine.captured[capturedColor]].sort((a,b)=>(order[b]||0)-(order[a]||0));
-    el.innerHTML = ''; if (!pieces.length) return;
-    const myScore  = pieces.reduce((s,t) => s+(order[t]||0), 0);
+    el.innerHTML=''; if (!pieces.length) return;
+    const myScore  = pieces.reduce((s,t)=>s+(order[t]||0),0);
     const oppScore = engine.captured[capturedColor==='w'?'b':'w'].reduce((s,t)=>s+(order[t]||0),0);
-    const adv = myScore - oppScore;
+    const adv = myScore-oppScore;
     pieces.forEach(type => {
-      const span = document.createElement('span');
-      span.className = 'cap-piece ' + (capturedColor==='w' ? 'cap-black' : 'cap-white');
-      span.textContent = SYMBOLS[capturedColor + type];
+      const span=document.createElement('span');
+      span.className='cap-piece '+(capturedColor==='w'?'cap-black':'cap-white');
+      span.textContent=SYMBOLS[capturedColor+type];
       el.appendChild(span);
     });
-    if (adv > 0) {
-      const s = document.createElement('span');
-      s.className = 'advantage-score'; s.textContent = '+' + adv;
+    if (adv>0) {
+      const s=document.createElement('span');
+      s.className='advantage-score'; s.textContent='+'+adv;
       el.appendChild(s);
     }
   };
-  if (myColor === 'w') { render('b','captured-bottom'); render('w','captured-top'); }
-  else                  { render('w','captured-bottom'); render('b','captured-top'); }
+  if (myColor==='w') { render('b','captured-bottom'); render('w','captured-top'); }
+  else               { render('w','captured-bottom'); render('b','captured-top'); }
 }
 
 /* =====================================================
    CARDS DE TURNO
 ===================================================== */
 function updateTurnCards() {
-  const isMyTurn = engine.turn === myColor;
+  const isMyTurn = engine.turn===myColor;
   const cb = document.getElementById('card-bottom');
   const ct = document.getElementById('card-top');
   if (cb) cb.classList.toggle('active-turn',  isMyTurn);
@@ -1357,30 +1109,29 @@ function updateTurnCards() {
    RESIGNAR
 ===================================================== */
 async function resign() {
-  if (!gameActive || isSpectator) return;
+  if (!gameActive||isSpectator) return;
   if (!confirm('Tem certeza que deseja resignar?')) return;
-  gameActive = false;
-  if (gameMode === 'multiplayer' && roomRef) {
-    const enemy = myColor === 'w' ? 'b' : 'w';
+  gameActive=false;
+  if (gameMode==='multiplayer'&&roomRef) {
+    const enemy = myColor==='w'?'b':'w';
     await roomRef.update({ status:'resigned', winner:enemy, state:engine.serialize() }).catch(()=>{});
   }
   saveGame('resigned');
-  showGameOver('Você resignou', gameMode==='ai' ? 'A IA venceu.' : 'O oponente venceu.');
+  showGameOver('Você resignou', gameMode==='ai'?'A IA venceu.':'O oponente venceu.');
 }
 
 /* =====================================================
    GAME OVER
 ===================================================== */
 function showGameOver(title, msg) {
-  const t = document.getElementById('gameover-title');
-  const m = document.getElementById('gameover-msg');
-  const i = document.getElementById('gameover-icon');
-  if (t) t.textContent = title;
-  if (m) m.textContent = msg;
-  if (i) i.textContent = title.includes('🏆') ? '🏆' : title.includes('Empate') ? '🤝' : title.includes('resignou') ? '🏳' : '♟';
-
-  const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
-  const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
+  const t=document.getElementById('gameover-title');
+  const m=document.getElementById('gameover-msg');
+  const i=document.getElementById('gameover-icon');
+  if (t) t.textContent=title;
+  if (m) m.textContent=msg;
+  if (i) i.textContent=title.includes('🏆')?'🏆':title.includes('Empate')?'🤝':title.includes('resignou')?'🏳':'♟';
+  const hide = id=>{ const e=document.getElementById(id); if(e) e.classList.add('hidden'); };
+  const show = id=>{ const e=document.getElementById(id); if(e) e.classList.remove('hidden'); };
   hide('btn-resign'); show('btn-new-game');
-  setTimeout(() => showModal('modal-gameover'), 700);
+  setTimeout(()=>showModal('modal-gameover'),700);
 }
