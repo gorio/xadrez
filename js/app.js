@@ -457,7 +457,7 @@ function applyMoveBySAN(eng, san) {
   /* ── Promoção ── ex: b8=Q, exd8=R */
   var promoType = 'Q';
   var work = s;
-  var promoMatch = work.match(/=([QRBN])$/);
+  const promoMatch = work.match(/=([QRBN])$/);
   if (promoMatch) {
     promoType = promoMatch[1];
     work = work.slice(0, -2);
