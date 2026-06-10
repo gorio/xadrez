@@ -257,20 +257,21 @@ async function loadReplay(gameId) {
 }
 
 /* =====================================================
-   REPLAY — navegar para posição específica (uso manual)
-   Nota: NÃO chama stopReplayAuto para não quebrar o Play
+   REPLAY — navega manualmente (para o auto-play)
 ===================================================== */
 function replayGoTo(targetIndex) {
-  stopReplayAuto(); // só para quando o usuário navega manualmente
+  stopReplayAuto();          // só cancela quando o usuário clica manualmente
   _replayApplyTo(targetIndex);
 }
 
-/* Função interna — aplica movimentos até targetIndex sem parar o auto-play */
+/* =====================================================
+   REPLAY — aplica movimentos internamente SEM parar o auto
+===================================================== */
 function _replayApplyTo(targetIndex) {
-  targetIndex = Math.max(0, Math.min(replayMoves.length, targetIndex));
-
+  targetIndex  = Math.max(0, Math.min(replayMoves.length, targetIndex));
   replayEngine = new ChessEngine();
   let applied  = 0;
+
   for (let i = 0; i < targetIndex; i++) {
     if (applyMoveBySAN(replayEngine, replayMoves[i])) applied++;
   }
@@ -284,7 +285,7 @@ function _replayApplyTo(targetIndex) {
 }
 
 /* =====================================================
-   REPLAY — Play automático (intervalo de 1s)
+   REPLAY — Play automático com 1s de intervalo
 ===================================================== */
 function toggleReplayAuto() {
   if (replayInterval) {
@@ -292,7 +293,7 @@ function toggleReplayAuto() {
     return;
   }
 
-  // Se já está no final, volta ao início antes de começar
+  // Se já está no final, reinicia do começo
   if (replayIndex >= replayMoves.length) {
     _replayApplyTo(0);
   }
@@ -305,10 +306,10 @@ function toggleReplayAuto() {
       stopReplayAuto();
       return;
     }
-    // Usa _replayApplyTo (não replayGoTo) para não parar o intervalo
-    _replayApplyTo(replayIndex + 1);
+    _replayApplyTo(replayIndex + 1); // usa a versão interna que NÃO cancela o interval
   }, 1000);
 }
+
 
 function stopReplayAuto() {
   if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
@@ -492,7 +493,7 @@ function initHistoryUI() {
 }
 
 /* =====================================================
-   INIT — Replay UI
+   INIT — Replay UI — aponta botões manuais para replayGoTo
 ===================================================== */
 function initReplayUI() {
   el('btn-replay-back', 'click',  openHistory);
