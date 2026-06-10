@@ -431,118 +431,93 @@ async function loadReplay(gameId) {
 }
 
 /* =====================================================
-   REPLAY — parser direto de SAN (sem gerar contra-SANs)
-   Decodifica o texto e encontra o lance legal correspondente
+   REPLAY — parser SAN direto (definitivo)
+   Não gera contra-SANs. Decodifica o texto diretamente.
 ===================================================== */
 function applyMoveBySAN(eng, san) {
-  if (!san) return false;
-  var color = eng.turn;
-  var FILES = 'abcdefgh';
-  var RANKS = '87654321';
+  if (!san || !san.trim()) return false;
+  const color = eng.turn;
+  const s = san.replace(/[+#!?\s]/g, ''); // remove apenas anotações
 
-  /* Remove anotações */
-  var s = san.replace(/[+#!?]/g, '').trim();
-
-  /* Roque */
+  /* ── Roque ── */
   if (s === 'O-O-O' || s === '0-0-0') {
-    for (var r0 = 0; r0 < 8; r0++) {
-      for (var c0 = 0; c0 < 8; c0++) {
-        var p0 = eng.board[r0] && eng.board[r0][c0];
-        if (!p0 || p0.type !== 'K' || p0.color !== color) continue;
-        var moves0 = eng.legalMoves(r0, c0);
-        for (var mi0 = 0; mi0 < moves0.length; mi0++) {
-          if (moves0[mi0].castle === 'Q') {
-            return eng.makeMove([r0, c0], moves0[mi0].to, 'Q');
-          }
-        }
-      }
-    }
-    return false;
+    const row = color === 'w' ? 7 : 0;
+    return eng.makeMove([row, 4], [row, 2], 'Q');
   }
   if (s === 'O-O' || s === '0-0') {
-    for (var r1 = 0; r1 < 8; r1++) {
-      for (var c1 = 0; c1 < 8; c1++) {
-        var p1 = eng.board[r1] && eng.board[r1][c1];
-        if (!p1 || p1.type !== 'K' || p1.color !== color) continue;
-        var moves1 = eng.legalMoves(r1, c1);
-        for (var mi1 = 0; mi1 < moves1.length; mi1++) {
-          if (moves1[mi1].castle === 'K') {
-            return eng.makeMove([r1, c1], moves1[mi1].to, 'Q');
-          }
-        }
-      }
-    }
-    return false;
+    const row = color === 'w' ? 7 : 0;
+    return eng.makeMove([row, 4], [row, 6], 'Q');
   }
 
-  /* Extrai peça */
-  var pieceTypes = 'KQRBN';
-  var pieceType = 'P';
-  var rest = s;
-  if (rest.length > 0 && pieceTypes.indexOf(rest[0]) !== -1) {
-    pieceType = rest[0];
-    rest = rest.slice(1);
-  }
+  const FILES = 'abcdefgh';
+  const RANKS = '87654321'; // row 0 = rank 8, row 7 = rank 1
 
-  /* Extrai promoção */
-  var promoType = 'Q';
-  var promoMatch = rest.match(/=([QRBN])/);
+  /* ── Promoção ── ex: b8=Q, exd8=R */
+  let promoType = 'Q';
+  let work = s;
+  const promoMatch = work.match(/=([QRBN])
+$
+/);
   if (promoMatch) {
     promoType = promoMatch[1];
-    rest = rest.replace(/=[QRBN]/, '');
+    work = work.slice(0, -2); // remove =Q
   }
 
-  /* Remove captura */
-  rest = rest.replace('x', '');
+  /* ── Peça ── */
+  let pieceType = 'P';
+  if ('KQRBN'.includes(work[0])) {
+    pieceType = work[0];
+    work = work.slice(1);
+  }
 
-  /* Extrai destino — últimas 2 chars */
-  if (rest.length < 2) return false;
-  var destStr = rest.slice(-2);
-  rest = rest.slice(0, rest.length - 2);
+  /* ── Remove 'x' de captura ── */
+  work = work.replace('x', '');
 
-  var destFile = FILES.indexOf(destStr[0]);
-  var destRank = RANKS.indexOf(destStr[1]);
+  /* ── Destino: últimas 2 chars ── ex: "e6", "h6", "a7" */
+  if (work.length < 2) return false;
+  const destStr  = work.slice(-2);
+  const destFile = FILES.indexOf(destStr[0]);
+  const destRank = RANKS.indexOf(destStr[1]);
   if (destFile === -1 || destRank === -1) return false;
+  const toRow = destRank;
+  const toCol = destFile;
+  work = work.slice(0, -2);
 
-  /* Desambiguação opcional */
-  var disambigFile = -1;
-  var disambigRank = -1;
-  if (rest.length > 0) {
-    var df = FILES.indexOf(rest[0]);
-    var dr = RANKS.indexOf(rest[0]);
-    if (df !== -1) { disambigFile = df; rest = rest.slice(1); }
-    else if (dr !== -1) { disambigRank = dr; rest = rest.slice(1); }
-  }
-  if (rest.length > 0) {
-    var df2 = FILES.indexOf(rest[0]);
-    var dr2 = RANKS.indexOf(rest[0]);
-    if (df2 !== -1) disambigFile = df2;
-    else if (dr2 !== -1) disambigRank = dr2;
+  /* ── Desambiguação: o que sobrou em `work` é file e/ou rank da origem */
+  let disambigFile = -1;
+  let disambigRank = -1;
+  for (const ch of work) {
+    const fi = FILES.indexOf(ch);
+    const ri = RANKS.indexOf(ch);
+    if (fi !== -1) disambigFile = fi;
+    else if (ri !== -1) disambigRank = ri;
   }
 
-  /* Busca peças candidatas */
-  var candidates = [];
-  for (var r = 0; r < 8; r++) {
-    for (var c = 0; c < 8; c++) {
-      var p = eng.board[r] && eng.board[r][c];
+  /* ── Busca a peça que pode mover para o destino ── */
+  const candidates = [];
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = eng.board[r]?.[c];
       if (!p || p.color !== color || p.type !== pieceType) continue;
       if (disambigFile !== -1 && c !== disambigFile) continue;
       if (disambigRank !== -1 && r !== disambigRank) continue;
-      var legalList = eng.legalMoves(r, c);
-      for (var li = 0; li < legalList.length; li++) {
-        if (legalList[li].to[0] === destRank && legalList[li].to[1] === destFile) {
-          candidates.push({ from: [r, c], to: legalList[li].to });
-        }
+      const legal = eng.legalMoves(r, c);
+      if (legal.some(m => m.to[0] === toRow && m.to[1] === toCol)) {
+        candidates.push([r, c]);
       }
     }
   }
 
   if (candidates.length === 0) {
-    console.warn('Lance nao reconhecido: "' + san + '"');
+    console.warn(`applyMoveBySAN: nenhum candidato para "${san}" (${color})`);
     return false;
   }
+  if (candidates.length > 1) {
+    console.warn(`applyMoveBySAN: ambíguo "${san}" — ${candidates.length} candidatos, usando o primeiro`);
+  }
 
-  return eng.makeMove(candidates[0].from, candidates[0].to, promoType);
+  const [fr, fc] = candidates[0];
+  return eng.makeMove([fr, fc], [toRow, toCol], promoType);
 }
 
 /* =====================================================
