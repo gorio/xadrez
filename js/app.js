@@ -257,25 +257,29 @@ async function loadReplay(gameId) {
 }
 
 /* =====================================================
-   REPLAY — navega manualmente (para o auto-play)
+   REPLAY — manual: para o auto-play e navega
 ===================================================== */
 function replayGoTo(targetIndex) {
-  stopReplayAuto();          // só cancela quando o usuário clica manualmente
+  stopReplayAuto();
   _replayApplyTo(targetIndex);
 }
 
 /* =====================================================
-   REPLAY — aplica movimentos internamente SEM parar o auto
+   REPLAY — interno: aplica até targetIndex SEM parar o auto
 ===================================================== */
 function _replayApplyTo(targetIndex) {
   targetIndex  = Math.max(0, Math.min(replayMoves.length, targetIndex));
   replayEngine = new ChessEngine();
-  let applied  = 0;
+  replayIndex  = 0;
 
   for (let i = 0; i < targetIndex; i++) {
-    if (applyMoveBySAN(replayEngine, replayMoves[i])) applied++;
+    const ok = applyMoveBySAN(replayEngine, replayMoves[i]);
+    if (ok) replayIndex++;
+    else {
+      /* Tenta aplicar o próximo mesmo assim para não travar */
+      console.warn('SAN não reconhecida, pulando:', replayMoves[i]);
+    }
   }
-  replayIndex = applied;
 
   const slider = document.getElementById('replay-slider');
   if (slider) slider.value = replayIndex;
@@ -285,7 +289,7 @@ function _replayApplyTo(targetIndex) {
 }
 
 /* =====================================================
-   REPLAY — Play automático com 1s de intervalo
+   REPLAY — Play: avança 1 lance por segundo
 ===================================================== */
 function toggleReplayAuto() {
   if (replayInterval) {
@@ -293,7 +297,7 @@ function toggleReplayAuto() {
     return;
   }
 
-  // Se já está no final, reinicia do começo
+  /* Se já chegou ao fim, reinicia do zero */
   if (replayIndex >= replayMoves.length) {
     _replayApplyTo(0);
   }
@@ -301,12 +305,15 @@ function toggleReplayAuto() {
   const btn = document.getElementById('replay-play');
   if (btn) btn.textContent = '⏸ Pausar';
 
+  let target = replayIndex + 1;
+
   replayInterval = setInterval(() => {
-    if (replayIndex >= replayMoves.length) {
+    if (target > replayMoves.length) {
       stopReplayAuto();
       return;
     }
-    _replayApplyTo(replayIndex + 1); // usa a versão interna que NÃO cancela o interval
+    _replayApplyTo(target);
+    target++;
   }, 1000);
 }
 
@@ -318,22 +325,32 @@ function stopReplayAuto() {
 }
 
 /* =====================================================
-   REPLAY — aplicar movimento SAN no engine
+   REPLAY — aplica um lance SAN no engine
+   Suporta: movimentos normais, roque (O-O/O-O-O),
+            capturas, promoções (b8=Q), en passant
 ===================================================== */
 function applyMoveBySAN(eng, san) {
   if (!san) return false;
   const color    = eng.turn;
-  const sanClean = san.replace(/[+#!?]/g, '');
+  const sanClean = san.replace(/[+#!?x]/g, '').trim();
+
+  /* Tenta todas as promoções possíveis */
+  const promos = ['Q', 'R', 'B', 'N'];
+
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       if (eng.board[r]?.[c]?.color !== color) continue;
       const legal = eng.legalMoves(r, c);
       for (const mv of legal) {
-        for (const promo of ['Q','R','B','N']) {
+        for (const promo of promos) {
           const clone = cloneEngine(eng);
-          if (!clone.makeMove([r,c], mv.to, promo)) continue;
-          const genSan = (clone.history[clone.history.length - 1] || '').replace(/[+#!?]/g, '');
-          if (genSan === sanClean) { eng.makeMove([r,c], mv.to, promo); return true; }
+          if (!clone.makeMove([r, c], mv.to, promo)) continue;
+          const generated = (clone.history[clone.history.length - 1] || '')
+            .replace(/[+#!?x]/g, '').trim();
+          if (generated === sanClean) {
+            eng.makeMove([r, c], mv.to, promo);
+            return true;
+          }
         }
       }
     }
@@ -420,9 +437,12 @@ function renderReplayHistory() {
   if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
 }
 
+/* =====================================================
+   REPLAY — contador
+===================================================== */
 function updateReplayCounter() {
-  const el = document.getElementById('replay-move-counter');
-  if (el) el.textContent = `Lance ${replayIndex} de ${replayMoves.length}`;
+  const e = document.getElementById('replay-move-counter');
+  if (e) e.textContent = `Lance ${replayIndex} de ${replayMoves.length}`;
 }
 
 /* =====================================================
