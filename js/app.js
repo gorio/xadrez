@@ -60,12 +60,21 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
+  /* Inicializa apenas os listeners da tela de auth,
+     que sempre existem no DOM */
+  initAuthUI();
+
+  /* Os demais listeners dependem de elementos que só
+     existem nas outras telas — inicializa com segurança */
+  safeInitOtherUI();
+
   fbAuth.onAuthStateChanged(user => {
     currentUser = user;
     if (user) {
       myId = user.uid;
       const name = user.displayName || user.email?.split('@')[0] || 'Jogador';
-      document.getElementById('header-username').textContent = name;
+      const headerUsername = document.getElementById('header-username');
+      if (headerUsername) headerUsername.textContent = name;
       db.ref('users/' + user.uid).update({
         displayName: name,
         email:       user.email || '',
@@ -77,115 +86,65 @@ window.addEventListener('DOMContentLoaded', () => {
       showScreen('auth');
     }
   });
+});
 
-  initAuthUI();
+function safeInitOtherUI() {
   initLobbyUI();
   initGameUI();
   initHistoryUI();
   initReplayUI();
-});
+}
 
 /* =====================================================
    AUTH
 ===================================================== */
 function initAuthUI() {
+  /* Tabs login/cadastro */
   document.querySelectorAll('.auth-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       const target = tab.dataset.tab;
-      document.getElementById('tab-login').classList.toggle('hidden', target !== 'login');
-      document.getElementById('tab-register').classList.toggle('hidden', target !== 'register');
+      const tabLogin    = document.getElementById('tab-login');
+      const tabRegister = document.getElementById('tab-register');
+      if (tabLogin)    tabLogin.classList.toggle('hidden', target !== 'login');
+      if (tabRegister) tabRegister.classList.toggle('hidden', target !== 'register');
       clearAuthError();
     });
   });
 
-  document.getElementById('btn-login-email').addEventListener('click', loginWithEmail);
-  document.getElementById('login-password').addEventListener('keydown', e => {
-    if (e.key === 'Enter') loginWithEmail();
-  });
-  document.getElementById('btn-login-google').addEventListener('click', loginWithGoogle);
-  document.getElementById('btn-register').addEventListener('click', registerWithEmail);
-  document.getElementById('btn-register-google').addEventListener('click', loginWithGoogle);
-  document.getElementById('btn-guest').addEventListener('click', loginAsGuest);
-  document.getElementById('btn-logout').addEventListener('click', () => fbAuth.signOut());
+  el('btn-login-email',    'click',   loginWithEmail);
+  el('login-password',     'keydown', e => { if (e.key === 'Enter') loginWithEmail(); });
+  el('btn-login-google',   'click',   loginWithGoogle);
+  el('btn-register',       'click',   registerWithEmail);
+  el('btn-register-google','click',   loginWithGoogle);
+  el('btn-guest',          'click',   loginAsGuest);
 }
-
-async function loginWithEmail() {
-  const email = document.getElementById('login-email').value.trim();
-  const pass  = document.getElementById('login-password').value;
-  if (!email || !pass) { showAuthError('Preencha e-mail e senha.'); return; }
-  try {
-    await fbAuth.signInWithEmailAndPassword(email, pass);
-  } catch (e) { showAuthError(authErrorMsg(e.code)); }
-}
-
-async function loginWithGoogle() {
-  try {
-    await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-  } catch (e) {
-    if (e.code !== 'auth/popup-closed-by-user') showAuthError(authErrorMsg(e.code));
-  }
-}
-
-async function registerWithEmail() {
-  const name  = document.getElementById('reg-name').value.trim();
-  const email = document.getElementById('reg-email').value.trim();
-  const pass  = document.getElementById('reg-password').value;
-  if (!name)           { showAuthError('Informe seu nome.'); return; }
-  if (!email)          { showAuthError('Informe seu e-mail.'); return; }
-  if (pass.length < 6) { showAuthError('Senha mínima de 6 caracteres.'); return; }
-  try {
-    const cred = await fbAuth.createUserWithEmailAndPassword(email, pass);
-    await cred.user.updateProfile({ displayName: name });
-    await cred.user.reload();
-  } catch (e) { showAuthError(authErrorMsg(e.code)); }
-}
-
-async function loginAsGuest() {
-  try {
-    const cred = await fbAuth.signInAnonymously();
-    await cred.user.updateProfile({ displayName: 'Visitante' });
-  } catch (e) { showAuthError('Erro ao entrar como visitante.'); }
-}
-
-function authErrorMsg(code) {
-  return ({
-    'auth/user-not-found':       'Usuário não encontrado.',
-    'auth/wrong-password':       'Senha incorreta.',
-    'auth/email-already-in-use': 'E-mail já cadastrado.',
-    'auth/invalid-email':        'E-mail inválido.',
-    'auth/weak-password':        'Senha muito fraca.',
-    'auth/too-many-requests':    'Muitas tentativas. Tente mais tarde.'
-  })[code] || 'Erro ao autenticar.';
-}
-
-function showAuthError(msg) { document.getElementById('auth-error').textContent = msg; }
-function clearAuthError()   { document.getElementById('auth-error').textContent = ''; }
 
 /* =====================================================
    LOBBY
 ===================================================== */
 function initLobbyUI() {
+  /* Logout fica no lobby header */
+  el('btn-logout', 'click', () => fbAuth.signOut());
+
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       gameMode = btn.dataset.mode;
-      document.getElementById('panel-multiplayer').classList.toggle('hidden', gameMode !== 'multiplayer');
-      document.getElementById('panel-ai').classList.toggle('hidden', gameMode !== 'ai');
+      const panelMP = document.getElementById('panel-multiplayer');
+      const panelAI = document.getElementById('panel-ai');
+      if (panelMP) panelMP.classList.toggle('hidden', gameMode !== 'multiplayer');
+      if (panelAI) panelAI.classList.toggle('hidden', gameMode !== 'ai');
     });
   });
 
-  document.getElementById('btn-create').addEventListener('click', createGame);
-  document.getElementById('btn-join').addEventListener('click', joinGame);
-  document.getElementById('input-room').addEventListener('keydown', e => {
-    if (e.key === 'Enter') joinGame();
-  });
-  document.getElementById('btn-spectate').addEventListener('click', spectateGame);
-  document.getElementById('input-spectate').addEventListener('keydown', e => {
-    if (e.key === 'Enter') spectateGame();
-  });
+  el('btn-create',   'click',   createGame);
+  el('btn-join',     'click',   joinGame);
+  el('input-room',   'keydown', e => { if (e.key === 'Enter') joinGame(); });
+  el('btn-spectate', 'click',   spectateGame);
+  el('input-spectate','keydown',e => { if (e.key === 'Enter') spectateGame(); });
 
   document.querySelectorAll('.color-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -203,36 +162,68 @@ function initLobbyUI() {
     });
   });
 
-  document.getElementById('btn-start-ai').addEventListener('click', startAIGame);
-  document.getElementById('btn-history').addEventListener('click', openHistory);
+  el('btn-start-ai', 'click', startAIGame);
+  el('btn-history',  'click', openHistory);
 }
 
 /* =====================================================
    JOGO — CONTROLES
 ===================================================== */
 function initGameUI() {
-  document.getElementById('btn-cancel').addEventListener('click', cancelGame);
-  document.getElementById('btn-copy').addEventListener('click', copyRoomCode);
-  document.getElementById('btn-resign').addEventListener('click', resign);
-  document.getElementById('btn-new-game').addEventListener('click', goLobby);
-  document.getElementById('btn-back-lobby').addEventListener('click', () => {
+  el('btn-cancel',   'click', cancelGame);
+  el('btn-copy',     'click', copyRoomCode);
+  el('btn-resign',   'click', resign);
+  el('btn-new-game', 'click', goLobby);
+  el('btn-back-lobby','click', () => {
     if (specRef) { specRef.off(); specRef = null; }
     goLobby();
   });
 
-  document.getElementById('btn-gameover-new').addEventListener('click', () => {
+  el('btn-gameover-new', 'click', () => {
     hideModal('modal-gameover');
     if (gameMode === 'ai') startAIGame();
     else goLobby();
   });
-  document.getElementById('btn-gameover-history').addEventListener('click', () => {
+  el('btn-gameover-history', 'click', () => {
     hideModal('modal-gameover');
     openHistory();
   });
-  document.getElementById('btn-gameover-lobby').addEventListener('click', () => {
+  el('btn-gameover-lobby', 'click', () => {
     hideModal('modal-gameover');
     goLobby();
   });
+}
+
+/* =====================================================
+   HISTÓRICO
+===================================================== */
+function initHistoryUI() {
+  el('btn-history-back', 'click', goLobby);
+}
+
+/* =====================================================
+   REPLAY
+===================================================== */
+function initReplayUI() {
+  el('btn-replay-back', 'click',  openHistory);
+  el('replay-first',    'click',  () => replayGoTo(0));
+  el('replay-prev',     'click',  () => replayGoTo(replayIndex - 1));
+  el('replay-next',     'click',  () => replayGoTo(replayIndex + 1));
+  el('replay-last',     'click',  () => replayGoTo(replayMoves.length));
+  el('replay-play',     'click',  toggleReplayAuto);
+  el('replay-slider',   'input',  e => replayGoTo(parseInt(e.target.value)));
+}
+
+/* =====================================================
+   HELPER — registra listener com proteção contra null
+===================================================== */
+function el(id, event, handler) {
+  const element = document.getElementById(id);
+  if (element) {
+    element.addEventListener(event, handler);
+  } else {
+    console.warn(`Elemento #${id} não encontrado ao registrar evento '${event}'.`);
+  }
 }
 
 /* =====================================================
