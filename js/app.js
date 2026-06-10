@@ -1,5 +1,5 @@
 /* =====================================================
-   CONFIGURAÇÃO DO FIREBASE
+   CONFIGURAÇÃO FIREBASE
 ===================================================== */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCa0WmUo1PIrlaYW6Ei8ZZK3XLZ4i0gIfo",
@@ -12,9 +12,6 @@ const FIREBASE_CONFIG = {
   measurementId: "G-9TKPXNPL54"
 };
 
-/* =====================================================
-   SÍMBOLOS
-===================================================== */
 const SYMBOLS = {
   wK:'♔', wQ:'♕', wR:'♖', wB:'♗', wN:'♘', wP:'♙',
   bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟'
@@ -23,21 +20,32 @@ const SYMBOLS = {
 /* =====================================================
    ESTADO GLOBAL
 ===================================================== */
-let db, roomRef;
+let db, fbAuth, currentUser = null;
 let engine          = new ChessEngine();
 let ai              = new ChessAI();
 let myColor         = null;
-let myId            = null;
+let myId            = 'guest_' + Math.random().toString(36).slice(2, 8);
 let roomCode        = null;
+let roomRef         = null;
+let specRef         = null;
 let selectedSq      = null;
 let legalMovesCache = [];
 let pendingPromotion = null;
 let gameActive      = false;
-let gameMode        = 'multiplayer'; // 'multiplayer' | 'ai'
-let aiColor         = 'b';           // cor que a IA joga
+let gameMode        = 'multiplayer';
+let aiColor         = 'b';
 let aiThinking      = false;
 let selectedDiff    = 'intermediario';
 let selectedPlayerColor = 'w';
+let isSpectator     = false;
+let opponentNameGlobal = 'Oponente';
+
+/* replay */
+let replayMoves    = [];
+let replayIndex    = 0;
+let replayEngine   = null;
+let replayInterval = null;
+let replayGameData = null;
 
 /* =====================================================
    BOOT
@@ -45,54 +53,140 @@ let selectedPlayerColor = 'w';
 window.addEventListener('DOMContentLoaded', () => {
   try {
     firebase.initializeApp(FIREBASE_CONFIG);
-    db = firebase.database();
+    db     = firebase.database();
+    fbAuth = firebase.auth();
   } catch (e) {
-    console.warn('Firebase não inicializado:', e.message);
+    console.error('Firebase init error:', e);
+    return;
   }
 
-  myId = Math.random().toString(36).slice(2, 10);
+  fbAuth.onAuthStateChanged(user => {
+    currentUser = user;
+    if (user) {
+      myId = user.uid;
+      const name = user.displayName || user.email?.split('@')[0] || 'Jogador';
+      document.getElementById('header-username').textContent = name;
+      db.ref('users/' + user.uid).update({
+        displayName: name,
+        email:       user.email || '',
+        photoURL:    user.photoURL || '',
+        lastSeen:    Date.now()
+      });
+      showScreen('lobby');
+    } else {
+      showScreen('auth');
+    }
+  });
 
+  initAuthUI();
   initLobbyUI();
-
-  document.getElementById('btn-cancel').addEventListener('click', cancelGame);
-  document.getElementById('btn-copy').addEventListener('click', copyRoomCode);
-  document.getElementById('btn-resign').addEventListener('click', resign);
-  document.getElementById('btn-new-game').addEventListener('click', goLobby);
-  document.getElementById('btn-gameover-new').addEventListener('click', () => {
-    hideModal('modal-gameover');
-    if (gameMode === 'ai') startAIGame();
-    else goLobby();
-  });
-  document.getElementById('btn-gameover-lobby').addEventListener('click', () => {
-    hideModal('modal-gameover');
-    goLobby();
-  });
+  initGameUI();
+  initHistoryUI();
+  initReplayUI();
 });
 
 /* =====================================================
-   LOBBY UI
+   AUTH
+===================================================== */
+function initAuthUI() {
+  document.querySelectorAll('.auth-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const target = tab.dataset.tab;
+      document.getElementById('tab-login').classList.toggle('hidden', target !== 'login');
+      document.getElementById('tab-register').classList.toggle('hidden', target !== 'register');
+      clearAuthError();
+    });
+  });
+
+  document.getElementById('btn-login-email').addEventListener('click', loginWithEmail);
+  document.getElementById('login-password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') loginWithEmail();
+  });
+  document.getElementById('btn-login-google').addEventListener('click', loginWithGoogle);
+  document.getElementById('btn-register').addEventListener('click', registerWithEmail);
+  document.getElementById('btn-register-google').addEventListener('click', loginWithGoogle);
+  document.getElementById('btn-guest').addEventListener('click', loginAsGuest);
+  document.getElementById('btn-logout').addEventListener('click', () => fbAuth.signOut());
+}
+
+async function loginWithEmail() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-password').value;
+  if (!email || !pass) { showAuthError('Preencha e-mail e senha.'); return; }
+  try {
+    await fbAuth.signInWithEmailAndPassword(email, pass);
+  } catch (e) { showAuthError(authErrorMsg(e.code)); }
+}
+
+async function loginWithGoogle() {
+  try {
+    await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  } catch (e) {
+    if (e.code !== 'auth/popup-closed-by-user') showAuthError(authErrorMsg(e.code));
+  }
+}
+
+async function registerWithEmail() {
+  const name  = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const pass  = document.getElementById('reg-password').value;
+  if (!name)           { showAuthError('Informe seu nome.'); return; }
+  if (!email)          { showAuthError('Informe seu e-mail.'); return; }
+  if (pass.length < 6) { showAuthError('Senha mínima de 6 caracteres.'); return; }
+  try {
+    const cred = await fbAuth.createUserWithEmailAndPassword(email, pass);
+    await cred.user.updateProfile({ displayName: name });
+    await cred.user.reload();
+  } catch (e) { showAuthError(authErrorMsg(e.code)); }
+}
+
+async function loginAsGuest() {
+  try {
+    const cred = await fbAuth.signInAnonymously();
+    await cred.user.updateProfile({ displayName: 'Visitante' });
+  } catch (e) { showAuthError('Erro ao entrar como visitante.'); }
+}
+
+function authErrorMsg(code) {
+  return ({
+    'auth/user-not-found':       'Usuário não encontrado.',
+    'auth/wrong-password':       'Senha incorreta.',
+    'auth/email-already-in-use': 'E-mail já cadastrado.',
+    'auth/invalid-email':        'E-mail inválido.',
+    'auth/weak-password':        'Senha muito fraca.',
+    'auth/too-many-requests':    'Muitas tentativas. Tente mais tarde.'
+  })[code] || 'Erro ao autenticar.';
+}
+
+function showAuthError(msg) { document.getElementById('auth-error').textContent = msg; }
+function clearAuthError()   { document.getElementById('auth-error').textContent = ''; }
+
+/* =====================================================
+   LOBBY
 ===================================================== */
 function initLobbyUI() {
-  /* Modo de jogo */
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       gameMode = btn.dataset.mode;
-
       document.getElementById('panel-multiplayer').classList.toggle('hidden', gameMode !== 'multiplayer');
       document.getElementById('panel-ai').classList.toggle('hidden', gameMode !== 'ai');
     });
   });
 
-  /* Botões multiplayer */
   document.getElementById('btn-create').addEventListener('click', createGame);
   document.getElementById('btn-join').addEventListener('click', joinGame);
   document.getElementById('input-room').addEventListener('keydown', e => {
     if (e.key === 'Enter') joinGame();
   });
+  document.getElementById('btn-spectate').addEventListener('click', spectateGame);
+  document.getElementById('input-spectate').addEventListener('keydown', e => {
+    if (e.key === 'Enter') spectateGame();
+  });
 
-  /* Cor do jogador (IA) */
   document.querySelectorAll('.color-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
@@ -101,7 +195,6 @@ function initLobbyUI() {
     });
   });
 
-  /* Dificuldade */
   document.querySelectorAll('.diff-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
@@ -110,8 +203,36 @@ function initLobbyUI() {
     });
   });
 
-  /* Iniciar vs IA */
   document.getElementById('btn-start-ai').addEventListener('click', startAIGame);
+  document.getElementById('btn-history').addEventListener('click', openHistory);
+}
+
+/* =====================================================
+   JOGO — CONTROLES
+===================================================== */
+function initGameUI() {
+  document.getElementById('btn-cancel').addEventListener('click', cancelGame);
+  document.getElementById('btn-copy').addEventListener('click', copyRoomCode);
+  document.getElementById('btn-resign').addEventListener('click', resign);
+  document.getElementById('btn-new-game').addEventListener('click', goLobby);
+  document.getElementById('btn-back-lobby').addEventListener('click', () => {
+    if (specRef) { specRef.off(); specRef = null; }
+    goLobby();
+  });
+
+  document.getElementById('btn-gameover-new').addEventListener('click', () => {
+    hideModal('modal-gameover');
+    if (gameMode === 'ai') startAIGame();
+    else goLobby();
+  });
+  document.getElementById('btn-gameover-history').addEventListener('click', () => {
+    hideModal('modal-gameover');
+    openHistory();
+  });
+  document.getElementById('btn-gameover-lobby').addEventListener('click', () => {
+    hideModal('modal-gameover');
+    goLobby();
+  });
 }
 
 /* =====================================================
@@ -121,18 +242,19 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-' + name).classList.add('active');
 }
-
-function showModal(id)  { document.getElementById(id).classList.remove('hidden'); }
-function hideModal(id)  { document.getElementById(id).classList.add('hidden'); }
+function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 function goLobby() {
   gameActive  = false;
   aiThinking  = false;
+  isSpectator = false;
   if (roomRef) { roomRef.off(); roomRef = null; }
+  if (specRef) { specRef.off(); specRef = null; }
   engine.reset();
-  selectedSq      = null;
-  legalMovesCache = [];
+  selectedSq = null; legalMovesCache = [];
   document.getElementById('input-room').value = '';
+  document.getElementById('input-spectate').value = '';
   clearLobbyError();
   showScreen('lobby');
 }
@@ -141,88 +263,412 @@ function showLobbyError(msg) { document.getElementById('lobby-error').textConten
 function clearLobbyError()   { document.getElementById('lobby-error').textContent = ''; }
 
 /* =====================================================
-   MODO: VS IA
+   SALVAR HISTÓRICO
 ===================================================== */
-function startAIGame() {
-  gameMode = 'ai';
+async function saveGame(result) {
+  if (!currentUser || currentUser.isAnonymous) return null;
 
-  /* Cor do jogador */
-  let playerColor = selectedPlayerColor;
-  if (playerColor === 'random') {
-    playerColor = Math.random() < 0.5 ? 'w' : 'b';
-  }
-
-  myColor = playerColor;
-  aiColor = playerColor === 'w' ? 'b' : 'w';
-
-  ai.setDifficulty(selectedDiff);
-  engine.reset();
-  gameActive = true;
-  selectedSq = null;
-  legalMovesCache = [];
-
-  /* Labels */
-  const diffLabels = {
-    iniciante: 'Iniciante', intermediario: 'Intermediário',
-    avancado: 'Avançado', expert: 'Expert'
+  const record = {
+    uid:          currentUser.uid,
+    playerName:   currentUser.displayName || 'Jogador',
+    opponentName: opponentNameGlobal,
+    myColor,
+    mode:         gameMode,
+    difficulty:   gameMode === 'ai' ? selectedDiff : null,
+    result,
+    moves:        engine.history.join('|'),
+    totalMoves:   engine.history.length,
+    roomCode:     roomCode || null,
+    playedAt:     Date.now()
   };
 
-  if (myColor === 'w') {
-    document.getElementById('avatar-bottom').textContent = '♙';
-    document.getElementById('avatar-top').textContent    = '🤖';
-    document.getElementById('label-bottom').textContent  = 'Você (Brancas)';
-    document.getElementById('label-top').textContent     = `IA — ${diffLabels[selectedDiff]}`;
-  } else {
-    document.getElementById('avatar-bottom').textContent = '♟';
-    document.getElementById('avatar-top').textContent    = '🤖';
-    document.getElementById('label-bottom').textContent  = 'Você (Pretas)';
-    document.getElementById('label-top').textContent     = `IA — ${diffLabels[selectedDiff]}`;
+  try {
+    const ref = await db.ref('games').push(record);
+    await db.ref(`users/${currentUser.uid}/games/${ref.key}`).set({
+      result, mode: gameMode, playedAt: record.playedAt,
+      totalMoves: record.totalMoves, opponentName: opponentNameGlobal,
+      difficulty: record.difficulty
+    });
+    return ref.key;
+  } catch (e) {
+    console.warn('Erro ao salvar jogo:', e);
+    return null;
   }
-
-  buildBoard();
-  renderGame();
-  showScreen('game');
-  document.getElementById('btn-resign').classList.remove('hidden');
-  document.getElementById('btn-new-game').classList.add('hidden');
-
-  /* Se IA joga brancas, ela começa */
-  if (engine.turn === aiColor) {
-    scheduleAIMove();
-  }
-}
-
-/* Agenda o movimento da IA com pequeno delay (UX) */
-function scheduleAIMove() {
-  if (!gameActive || engine.turn !== aiColor) return;
-  aiThinking = true;
-  updateStatusBar();
-
-  const delay = selectedDiff === 'expert' ? 800 : 400;
-
-  setTimeout(() => {
-    if (!gameActive) return;
-    const move = ai.getBestMove(engine);
-    aiThinking = false;
-
-    if (move) {
-      engine.makeMove(move.from, move.to, move.promoteTo || 'Q');
-      selectedSq      = null;
-      legalMovesCache = [];
-      renderGame();
-
-      if (engine.status === 'checkmate') {
-        gameActive = false;
-        showGameOver('Xeque-mate!', 'A IA venceu. Tente novamente!');
-      } else if (engine.status === 'stalemate') {
-        gameActive = false;
-        showGameOver('Empate!', 'Afogamento — nenhum movimento legal.');
-      }
-    }
-  }, delay);
 }
 
 /* =====================================================
-   MODO: MULTIPLAYER — CRIAR
+   HISTÓRICO
+===================================================== */
+function initHistoryUI() {
+  document.getElementById('btn-history-back').addEventListener('click', goLobby);
+}
+
+async function openHistory() {
+  showScreen('history');
+  const listEl  = document.getElementById('history-list');
+  const statsEl = document.getElementById('history-stats');
+  listEl.innerHTML  = '<div class="history-loading">Carregando...</div>';
+  statsEl.innerHTML = '';
+
+  if (!currentUser || currentUser.isAnonymous) {
+    listEl.innerHTML = '<div class="history-empty">Faça login para ver seu histórico.</div>';
+    return;
+  }
+
+  try {
+    const snap = await db.ref(`users/${currentUser.uid}/games`)
+      .orderByChild('playedAt').limitToLast(50).once('value');
+
+    const raw = snap.val();
+    if (!raw) {
+      listEl.innerHTML = '<div class="history-empty">Nenhuma partida encontrada.<br>Jogue sua primeira partida!</div>';
+      return;
+    }
+
+    const games = Object.entries(raw)
+      .map(([id, g]) => ({ id, ...g }))
+      .sort((a, b) => b.playedAt - a.playedAt);
+
+    /* Stats */
+    const wins   = games.filter(g => g.result === 'win').length;
+    const losses = games.filter(g => ['loss','resigned'].includes(g.result)).length;
+    const draws  = games.filter(g => g.result === 'draw').length;
+    statsEl.innerHTML = `
+      <span class="stat stat-win">✓ ${wins}</span>
+      <span class="stat stat-draw">= ${draws}</span>
+      <span class="stat stat-loss">✗ ${losses}</span>
+    `;
+
+    listEl.innerHTML = '';
+    games.forEach(game => {
+      const card = document.createElement('div');
+      card.className = 'history-card';
+
+      const resClass = { win:'result-win', loss:'result-loss', draw:'result-draw', resigned:'result-loss' }[game.result] || '';
+      const resText  = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' }[game.result] || game.result;
+      const modeText = game.mode === 'ai'
+        ? `🤖 IA (${game.difficulty || ''})`
+        : '👥 Multiplayer';
+      const date = new Date(game.playedAt).toLocaleDateString('pt-BR', {
+        day:'2-digit', month:'2-digit', year:'2-digit',
+        hour:'2-digit', minute:'2-digit'
+      });
+
+      card.innerHTML = `
+        <div class="history-card-left">
+          <span class="history-result ${resClass}">${resText}</span>
+          <span class="history-opponent">vs ${game.opponentName || 'Oponente'}</span>
+        </div>
+        <div class="history-card-center">
+          <span class="history-mode">${modeText}</span>
+          <span class="history-moves">${game.totalMoves || 0} lances</span>
+        </div>
+        <div class="history-card-right">
+          <span class="history-date">${date}</span>
+          <button class="btn btn-small btn-secondary" data-id="${game.id}">▶ Replay</button>
+        </div>
+      `;
+
+      card.querySelector('button').addEventListener('click', () => loadReplay(game.id));
+      listEl.appendChild(card);
+    });
+
+  } catch (e) {
+    listEl.innerHTML = '<div class="history-empty">Erro ao carregar histórico.</div>';
+    console.error(e);
+  }
+}
+
+/* =====================================================
+   REPLAY
+===================================================== */
+function initReplayUI() {
+  document.getElementById('btn-replay-back').addEventListener('click', openHistory);
+  document.getElementById('replay-first').addEventListener('click', () => replayGoTo(0));
+  document.getElementById('replay-prev').addEventListener('click',  () => replayGoTo(replayIndex - 1));
+  document.getElementById('replay-next').addEventListener('click',  () => replayGoTo(replayIndex + 1));
+  document.getElementById('replay-last').addEventListener('click',  () => replayGoTo(replayMoves.length));
+  document.getElementById('replay-play').addEventListener('click',  toggleReplayAuto);
+  document.getElementById('replay-slider').addEventListener('input', e => {
+    replayGoTo(parseInt(e.target.value));
+  });
+}
+
+async function loadReplay(gameId) {
+  showScreen('replay');
+  try {
+    const snap = await db.ref('games/' + gameId).once('value');
+    replayGameData = snap.val();
+    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
+
+    const isWhite = replayGameData.myColor === 'w';
+    document.getElementById('replay-label-bottom').textContent =
+      isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`;
+    document.getElementById('replay-label-top').textContent =
+      isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`;
+    document.getElementById('replay-avatar-bottom').textContent = isWhite ? '♙' : '♟';
+    document.getElementById('replay-avatar-top').textContent    = isWhite ? '♟' : '♙';
+
+    replayMoves  = replayGameData.moves ? replayGameData.moves.split('|').filter(Boolean) : [];
+    replayIndex  = 0;
+    replayEngine = new ChessEngine();
+
+    const slider = document.getElementById('replay-slider');
+    slider.max   = replayMoves.length;
+    slider.value = 0;
+
+    buildReplayBoard();
+    replayRenderBoard();
+    renderReplayHistory();
+    updateReplayCounter();
+
+    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
+    document.getElementById('replay-status').textContent =
+      `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`;
+
+  } catch (e) {
+    console.error(e);
+    alert('Erro ao carregar replay.');
+    openHistory();
+  }
+}
+
+function buildReplayBoard() {
+  const boardEl = document.getElementById('replay-chessboard');
+  boardEl.innerHTML = '';
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const sq = document.createElement('div');
+      sq.className = 'square';
+      sq.dataset.row = row;
+      sq.dataset.col = col;
+      boardEl.appendChild(sq);
+    }
+  }
+
+  ['replay-coords-file-top','replay-coords-file-bottom'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    'abcdefgh'.split('').forEach(f => {
+      const s = document.createElement('span');
+      s.className = 'coord-label';
+      s.style.width = 'calc(var(--board-size) / 8)';
+      s.textContent = f;
+      el.appendChild(s);
+    });
+  });
+
+  ['replay-coords-rank-left','replay-coords-rank-right'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    '87654321'.split('').forEach(r => {
+      const s = document.createElement('span');
+      s.className = 'coord-label';
+      s.style.height = 'calc(var(--board-size) / 8)';
+      s.textContent = r;
+      el.appendChild(s);
+    });
+  });
+}
+
+function replayGoTo(targetIndex) {
+  stopReplayAuto();
+  targetIndex = Math.max(0, Math.min(replayMoves.length, targetIndex));
+
+  /* Reconstrói do zero até targetIndex aplicando movimentos SAN */
+  replayEngine = new ChessEngine();
+  let applied  = 0;
+  for (let i = 0; i < targetIndex; i++) {
+    if (applyMoveBySAN(replayEngine, replayMoves[i])) applied++;
+  }
+  replayIndex = applied;
+
+  document.getElementById('replay-slider').value = replayIndex;
+  updateReplayCounter();
+  replayRenderBoard();
+  renderReplayHistory();
+}
+
+/* Encontra e executa o movimento legal que produz a notação SAN */
+function applyMoveBySAN(eng, san) {
+  if (!san) return false;
+  const color = eng.turn;
+  const sanClean = san.replace(/[+#!?]/g, '');
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (eng.board[r]?.[c]?.color !== color) continue;
+      const legal = eng.legalMoves(r, c);
+      for (const mv of legal) {
+        for (const promo of ['Q','R','B','N']) {
+          const clone = cloneEngine(eng);
+          const ok = clone.makeMove([r,c], mv.to, promo);
+          if (!ok) continue;
+          const genSan = (clone.history[clone.history.length - 1] || '').replace(/[+#!?]/g, '');
+          if (genSan === sanClean) {
+            eng.makeMove([r,c], mv.to, promo);
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function cloneEngine(src) {
+  const dst = new ChessEngine();
+  dst.board     = src.board.map(row => row.map(p => p ? {...p} : null));
+  dst.turn      = src.turn;
+  dst.castling  = { ...src.castling };
+  dst.enPassant = src.enPassant ? [...src.enPassant] : null;
+  dst.history   = [...src.history];
+  dst.captured  = { w: [...src.captured.w], b: [...src.captured.b] };
+  dst.status    = src.status;
+  dst.lastMove  = src.lastMove ? { from:[...src.lastMove.from], to:[...src.lastMove.to] } : null;
+  return dst;
+}
+
+function replayRenderBoard() {
+  document.getElementById('replay-chessboard').querySelectorAll('.square').forEach(sq => {
+    const vr = parseInt(sq.dataset.row);
+    const vc = parseInt(sq.dataset.col);
+    const isLight = (vr + vc) % 2 === 0;
+    sq.className = 'square ' + (isLight ? 'light' : 'dark');
+    sq.innerHTML = '';
+
+    if (replayEngine.lastMove) {
+      const [fr, fc] = replayEngine.lastMove.from;
+      const [tr, tc] = replayEngine.lastMove.to;
+      if ((vr===fr && vc===fc) || (vr===tr && vc===tc)) sq.classList.add('last-move');
+    }
+
+    const piece = replayEngine.piece(vr, vc);
+    if (piece) {
+      const span = document.createElement('span');
+      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
+      span.textContent = SYMBOLS[piece.color + piece.type] || '?';
+      sq.appendChild(span);
+    }
+  });
+}
+
+function renderReplayHistory() {
+  const box = document.getElementById('replay-move-history');
+  box.innerHTML = '';
+  for (let i = 0; i < replayMoves.length; i += 2) {
+    const row = document.createElement('div');
+    row.className = 'move-row';
+
+    const num = document.createElement('span');
+    num.className = 'move-num';
+    num.textContent = (Math.floor(i/2)+1) + '.';
+
+    const w = document.createElement('span');
+    w.className = 'move-san' + (replayIndex === i+1 ? ' move-active' : '');
+    w.textContent = replayMoves[i] || '';
+    w.style.cursor = 'pointer';
+    w.addEventListener('click', () => replayGoTo(i+1));
+
+    const b = document.createElement('span');
+    b.className = 'move-san' + (replayIndex === i+2 ? ' move-active' : '');
+    b.textContent = replayMoves[i+1] || '';
+    if (replayMoves[i+1]) {
+      b.style.cursor = 'pointer';
+      b.addEventListener('click', () => replayGoTo(i+2));
+    }
+
+    row.appendChild(num); row.appendChild(w); row.appendChild(b);
+    box.appendChild(row);
+  }
+  const active = box.querySelector('.move-active');
+  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
+}
+
+function updateReplayCounter() {
+  document.getElementById('replay-move-counter').textContent =
+    `Lance ${replayIndex} de ${replayMoves.length}`;
+}
+
+function toggleReplayAuto() {
+  if (replayInterval) {
+    stopReplayAuto();
+  } else {
+    document.getElementById('replay-play').textContent = '⏸ Pausar';
+    replayInterval = setInterval(() => {
+      if (replayIndex >= replayMoves.length) { stopReplayAuto(); return; }
+      replayGoTo(replayIndex + 1);
+    }, 900);
+  }
+}
+
+function stopReplayAuto() {
+  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
+  const btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '▶ Play';
+}
+
+/* =====================================================
+   ESPECTADOR
+===================================================== */
+async function spectateGame() {
+  const code = document.getElementById('input-spectate').value.trim().toUpperCase();
+  clearLobbyError();
+  if (code.length !== 6) { showLobbyError('Código deve ter 6 caracteres.'); return; }
+
+  try {
+    const snap = await db.ref('rooms/' + code).once('value');
+    const data = snap.val();
+    if (!data)                     { showLobbyError('Sala não encontrada.'); return; }
+    if (data.status === 'waiting') { showLobbyError('Partida ainda não começou.'); return; }
+    if (data.status === 'finished' || data.status === 'resigned') {
+      showLobbyError('Esta partida já encerrou.'); return;
+    }
+
+    isSpectator = true;
+    roomCode    = code;
+    myColor     = 'w';
+    engine.deserialize(data.state);
+
+    document.getElementById('label-top').textContent    = data.blackName || 'Pretas';
+    document.getElementById('label-bottom').textContent = data.whiteName || 'Brancas';
+    document.getElementById('avatar-top').textContent   = '♟';
+    document.getElementById('avatar-bottom').textContent = '♙';
+
+    buildBoard();
+    renderGame();
+    showScreen('game');
+
+    document.getElementById('btn-resign').classList.add('hidden');
+    document.getElementById('btn-new-game').classList.add('hidden');
+    document.getElementById('btn-back-lobby').classList.remove('hidden');
+    document.getElementById('spectator-bar').classList.remove('hidden');
+    document.getElementById('status-bar').textContent = `👁 Assistindo — sala ${code}`;
+
+    specRef = db.ref('rooms/' + code);
+    specRef.on('value', snap => {
+      const d = snap.val();
+      if (!d) return;
+      engine.deserialize(d.state);
+      renderGame();
+      const turn = d.state?.turn === 'w' ? 'Brancas' : 'Pretas';
+      document.getElementById('status-bar').textContent = `👁 ${turn} jogam — sala ${code}`;
+
+      if (['finished','resigned','abandoned'].includes(d.status)) {
+        document.getElementById('status-bar').textContent = '👁 Partida encerrada';
+        specRef.off();
+      }
+    });
+
+  } catch (e) {
+    showLobbyError('Erro ao conectar: ' + e.message);
+  }
+}
+
+/* =====================================================
+   CRIAR PARTIDA (MULTIPLAYER)
 ===================================================== */
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -232,7 +678,6 @@ function generateRoomCode() {
 }
 
 async function createGame() {
-  if (!db) { showLobbyError('Firebase não configurado.'); return; }
   const btn = document.getElementById('btn-create');
   btn.disabled = true; btn.textContent = 'Criando...';
   clearLobbyError();
@@ -243,10 +688,16 @@ async function createGame() {
     engine.reset();
     roomRef  = db.ref('rooms/' + roomCode);
 
+    const myName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Jogador';
+
     await roomRef.set({
-      white: myId, black: null,
-      state: engine.serialize(),
-      createdAt: Date.now(), status: 'waiting'
+      white:     myId,
+      whiteName: myName,
+      black:     null,
+      blackName: null,
+      state:     engine.serialize(),
+      createdAt: Date.now(),
+      status:    'waiting'
     });
 
     setTimeout(() => {
@@ -264,7 +715,8 @@ async function createGame() {
       if (!data) return;
       if (data.black && data.status === 'playing') {
         roomRef.off();
-        startMultiplayerGame();
+        opponentNameGlobal = data.blackName || 'Oponente';
+        startMultiplayerGame(myName, opponentNameGlobal);
       }
     });
 
@@ -276,14 +728,12 @@ async function createGame() {
 }
 
 /* =====================================================
-   MODO: MULTIPLAYER — ENTRAR
+   ENTRAR NA PARTIDA (MULTIPLAYER)
 ===================================================== */
 async function joinGame() {
-  if (!db) { showLobbyError('Firebase não configurado.'); return; }
   const input = document.getElementById('input-room');
   const code  = input.value.trim().toUpperCase();
   clearLobbyError();
-
   if (code.length !== 6) { showLobbyError('Código deve ter 6 caracteres.'); return; }
 
   const btn = document.getElementById('btn-join');
@@ -294,16 +744,19 @@ async function joinGame() {
     const snap = await roomRef.once('value');
     const data = snap.val();
 
-    if (!data)                                          { showLobbyError('Sala não encontrada.');       roomRef=null; return; }
-    if (data.black)                                     { showLobbyError('Sala já está cheia.');        roomRef=null; return; }
-    if (['finished','resigned'].includes(data.status)) { showLobbyError('Partida já encerrada.');      roomRef=null; return; }
+    if (!data)                                          { showLobbyError('Sala não encontrada.');  roomRef=null; return; }
+    if (data.black)                                     { showLobbyError('Sala já está cheia.');   roomRef=null; return; }
+    if (['finished','resigned'].includes(data.status)) { showLobbyError('Partida já encerrada.'); roomRef=null; return; }
 
     roomCode = code;
     myColor  = 'b';
     engine.deserialize(data.state);
 
-    await roomRef.update({ black: myId, status: 'playing' });
-    startMultiplayerGame();
+    const myName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Jogador';
+    await roomRef.update({ black: myId, blackName: myName, status: 'playing' });
+
+    opponentNameGlobal = data.whiteName || 'Oponente';
+    startMultiplayerGame(myName, opponentNameGlobal);
 
   } catch (e) {
     showLobbyError('Erro ao entrar: ' + e.message);
@@ -329,61 +782,117 @@ function copyRoomCode() {
 /* =====================================================
    INICIAR JOGO MULTIPLAYER
 ===================================================== */
-function startMultiplayerGame() {
-  gameMode   = 'multiplayer';
-  gameActive = true;
-  selectedSq = null;
-  legalMovesCache = [];
+function startMultiplayerGame(myName, oppName) {
+  gameMode    = 'multiplayer';
+  gameActive  = true;
+  isSpectator = false;
+  selectedSq  = null; legalMovesCache = [];
 
-  if (myColor === 'w') {
-    document.getElementById('avatar-bottom').textContent = '♙';
-    document.getElementById('avatar-top').textContent    = '♟';
-    document.getElementById('label-bottom').textContent  = 'Você (Brancas)';
-    document.getElementById('label-top').textContent     = 'Oponente (Pretas)';
-  } else {
-    document.getElementById('avatar-bottom').textContent = '♟';
-    document.getElementById('avatar-top').textContent    = '♙';
-    document.getElementById('label-bottom').textContent  = 'Você (Pretas)';
-    document.getElementById('label-top').textContent     = 'Oponente (Brancas)';
-  }
+  document.getElementById('avatar-bottom').textContent = myColor === 'w' ? '♙' : '♟';
+  document.getElementById('avatar-top').textContent    = myColor === 'w' ? '♟' : '♙';
+  document.getElementById('label-bottom').textContent  = `${myName} (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
+  document.getElementById('label-top').textContent     = `${oppName} (${myColor === 'w' ? 'Pretas' : 'Brancas'})`;
 
   buildBoard();
   renderGame();
   showScreen('game');
   document.getElementById('btn-resign').classList.remove('hidden');
   document.getElementById('btn-new-game').classList.add('hidden');
+  document.getElementById('btn-back-lobby').classList.add('hidden');
+  document.getElementById('spectator-bar').classList.add('hidden');
 
-  /* Escuta Firebase */
   roomRef.on('value', snap => {
     const data = snap.val();
     if (!data) return;
 
     if (data.status === 'resigned' && data.winner !== myColor) {
       engine.deserialize(data.state);
-      renderGame();
-      gameActive = false;
-      showGameOver('Vitória! 🏆', 'O oponente resignou a partida.');
+      renderGame(); gameActive = false;
+      saveGame('win');
+      showGameOver('Vitória! 🏆', 'O oponente resignou.');
       return;
     }
     if (data.status === 'abandoned') {
       gameActive = false;
-      showGameOver('Vitória! 🏆', 'O oponente abandonou a partida.');
+      saveGame('win');
+      showGameOver('Vitória! 🏆', 'O oponente abandonou.');
       return;
     }
 
     if (data.state && data.state.turn === myColor) {
       engine.deserialize(data.state);
       renderGame();
-
       if (engine.status === 'checkmate') {
         gameActive = false;
-        showGameOver('Xeque-mate!', 'Você perdeu. Melhor sorte na próxima!');
+        saveGame('loss');
+        showGameOver('Xeque-mate!', 'Você perdeu. Tente novamente!');
       } else if (engine.status === 'stalemate') {
         gameActive = false;
-        showGameOver('Empate!', 'Afogamento — nenhum movimento legal.');
+        saveGame('draw');
+        showGameOver('Empate!', 'Afogamento.');
       }
     }
   });
+}
+
+/* =====================================================
+   MODO VS IA
+===================================================== */
+function startAIGame() {
+  gameMode = 'ai';
+  let playerColor = selectedPlayerColor;
+  if (playerColor === 'random') playerColor = Math.random() < 0.5 ? 'w' : 'b';
+  myColor  = playerColor;
+  aiColor  = playerColor === 'w' ? 'b' : 'w';
+
+  ai.setDifficulty(selectedDiff);
+  engine.reset();
+  gameActive  = true;
+  isSpectator = false;
+  selectedSq  = null; legalMovesCache = [];
+  opponentNameGlobal = `IA (${selectedDiff})`;
+
+  const diffLabels = { iniciante:'Iniciante', intermediario:'Intermediário', avancado:'Avançado', expert:'Expert' };
+  document.getElementById('avatar-bottom').textContent = myColor === 'w' ? '♙' : '♟';
+  document.getElementById('avatar-top').textContent    = '🤖';
+  document.getElementById('label-bottom').textContent  = `Você (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
+  document.getElementById('label-top').textContent     = `IA — ${diffLabels[selectedDiff]}`;
+
+  buildBoard();
+  renderGame();
+  showScreen('game');
+  document.getElementById('btn-resign').classList.remove('hidden');
+  document.getElementById('btn-new-game').classList.add('hidden');
+  document.getElementById('btn-back-lobby').classList.add('hidden');
+  document.getElementById('spectator-bar').classList.add('hidden');
+
+  if (engine.turn === aiColor) scheduleAIMove();
+}
+
+function scheduleAIMove() {
+  if (!gameActive || engine.turn !== aiColor) return;
+  aiThinking = true;
+  updateStatusBar();
+  const delay = selectedDiff === 'expert' ? 900 : 450;
+  setTimeout(() => {
+    if (!gameActive) return;
+    const move = ai.getBestMove(engine);
+    aiThinking = false;
+    if (move) {
+      engine.makeMove(move.from, move.to, move.promoteTo || 'Q');
+      selectedSq = null; legalMovesCache = [];
+      renderGame();
+      if (engine.status === 'checkmate') {
+        gameActive = false;
+        saveGame('loss');
+        showGameOver('Xeque-mate!', 'A IA venceu. Tente novamente!');
+      } else if (engine.status === 'stalemate') {
+        gameActive = false;
+        saveGame('draw');
+        showGameOver('Empate!', 'Afogamento.');
+      }
+    }
+  }, delay);
 }
 
 /* =====================================================
@@ -393,12 +902,8 @@ function buildBoard() {
   const boardEl = document.getElementById('chessboard');
   boardEl.innerHTML = '';
 
-  const files = myColor === 'w'
-    ? ['a','b','c','d','e','f','g','h']
-    : ['h','g','f','e','d','c','b','a'];
-  const ranks = myColor === 'w'
-    ? ['8','7','6','5','4','3','2','1']
-    : ['1','2','3','4','5','6','7','8'];
+  const files = myColor === 'w' ? ['a','b','c','d','e','f','g','h'] : ['h','g','f','e','d','c','b','a'];
+  const ranks = myColor === 'w' ? ['8','7','6','5','4','3','2','1'] : ['1','2','3','4','5','6','7','8'];
 
   ['coords-file-top','coords-file-bottom'].forEach(id => {
     const el = document.getElementById(id);
@@ -432,7 +937,7 @@ function buildBoard() {
       sq.className = 'square';
       sq.dataset.row = row;
       sq.dataset.col = col;
-      sq.addEventListener('click', onSquareClick);
+      if (!isSpectator) sq.addEventListener('click', onSquareClick);
       boardEl.appendChild(sq);
     }
   }
@@ -445,12 +950,12 @@ function logicToView(lr, lc) { return myColor === 'w' ? [lr, lc] : [7-lr, 7-lc];
    RENDERIZAÇÃO
 ===================================================== */
 function renderGame() {
-  document.querySelectorAll('.square').forEach(sq => {
+  document.querySelectorAll('#chessboard .square').forEach(sq => {
     const vr = parseInt(sq.dataset.row);
     const vc = parseInt(sq.dataset.col);
     const [lr, lc] = viewToLogic(vr, vc);
-
     const isLight = (vr + vc) % 2 === 0;
+
     sq.className = 'square ' + (isLight ? 'light' : 'dark');
     sq.innerHTML = '';
 
@@ -474,16 +979,13 @@ function renderGame() {
   if (selectedSq !== null) {
     const [slr, slc] = selectedSq;
     const [svr, svc] = logicToView(slr, slc);
-    const selEl = document.querySelector(`[data-row="${svr}"][data-col="${svc}"]`);
-    if (selEl) selEl.classList.add('selected');
+    const sel = document.querySelector(`#chessboard [data-row="${svr}"][data-col="${svc}"]`);
+    if (sel) sel.classList.add('selected');
 
     legalMovesCache.forEach(m => {
       const [mvr, mvc] = logicToView(m.to[0], m.to[1]);
-      const el = document.querySelector(`[data-row="${mvr}"][data-col="${mvc}"]`);
-      if (el) {
-        const hasPiece = engine.piece(m.to[0], m.to[1]) || m.enPassant;
-        el.classList.add(hasPiece ? 'capture-hint' : 'move-hint');
-      }
+      const el = document.querySelector(`#chessboard [data-row="${mvr}"][data-col="${mvc}"]`);
+      if (el) el.classList.add(engine.piece(m.to[0], m.to[1]) || m.enPassant ? 'capture-hint' : 'move-hint');
     });
   }
 
@@ -494,7 +996,7 @@ function renderGame() {
 }
 
 /* =====================================================
-   CLIQUE NA CASA
+   CLIQUE
 ===================================================== */
 function onSquareClick(e) {
   const sq = e.currentTarget;
@@ -502,8 +1004,7 @@ function onSquareClick(e) {
   const vc = parseInt(sq.dataset.col);
   const [lr, lc] = viewToLogic(vr, vc);
 
-  if (!gameActive) return;
-  if (aiThinking)  return;
+  if (!gameActive || isSpectator || aiThinking) return;
   if (engine.turn !== myColor) return;
   if (['checkmate','stalemate'].includes(engine.status)) return;
 
@@ -522,66 +1023,50 @@ function onSquareClick(e) {
       doMove([slr,slc], [lr,lc]);
       return;
     }
-
     if (piece && piece.color === myColor) {
-      selectedSq = [lr, lc];
-      legalMovesCache = engine.legalMoves(lr, lc);
-      renderGame();
-      return;
+      selectedSq = [lr,lc]; legalMovesCache = engine.legalMoves(lr,lc); renderGame(); return;
     }
-
-    selectedSq = null;
-    legalMovesCache = [];
-    renderGame();
+    selectedSq = null; legalMovesCache = []; renderGame();
     return;
   }
 
   if (piece && piece.color === myColor) {
-    selectedSq = [lr, lc];
-    legalMovesCache = engine.legalMoves(lr, lc);
-    renderGame();
+    selectedSq = [lr,lc]; legalMovesCache = engine.legalMoves(lr,lc); renderGame();
   }
 }
 
 /* =====================================================
-   EXECUTA MOVIMENTO
+   EXECUTAR MOVIMENTO
 ===================================================== */
 async function doMove(from, to, promoteTo = 'Q') {
   const ok = engine.makeMove(from, to, promoteTo);
   if (!ok) return;
-
-  selectedSq = null;
-  legalMovesCache = [];
+  selectedSq = null; legalMovesCache = [];
   renderGame();
 
-  /* Multiplayer: salva no Firebase */
   if (gameMode === 'multiplayer' && roomRef) {
     try { await roomRef.update({ state: engine.serialize() }); }
-    catch (e) { console.error('Erro ao salvar:', e); }
+    catch (e) { console.error('Erro ao salvar movimento:', e); }
   }
 
-  /* Verifica fim de jogo */
   if (engine.status === 'checkmate') {
-    if (gameMode === 'multiplayer' && roomRef) {
+    if (gameMode === 'multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:myColor }).catch(()=>{});
-    }
     gameActive = false;
+    saveGame('win');
     showGameOver('Xeque-mate! 🏆', 'Você venceu! Parabéns!');
     return;
   }
   if (engine.status === 'stalemate') {
-    if (gameMode === 'multiplayer' && roomRef) {
+    if (gameMode === 'multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:null }).catch(()=>{});
-    }
     gameActive = false;
+    saveGame('draw');
     showGameOver('Empate!', 'Afogamento — nenhum movimento legal.');
     return;
   }
 
-  /* vs IA: agenda resposta */
-  if (gameMode === 'ai' && engine.turn === aiColor) {
-    scheduleAIMove();
-  }
+  if (gameMode === 'ai' && engine.turn === aiColor) scheduleAIMove();
 }
 
 /* =====================================================
@@ -597,9 +1082,7 @@ function showPromotion() {
     btn.addEventListener('click', () => {
       hideModal('modal-promotion');
       const { from, to } = pendingPromotion;
-      pendingPromotion = null;
-      selectedSq = null;
-      legalMovesCache = [];
+      pendingPromotion = null; selectedSq = null; legalMovesCache = [];
       doMove(from, to, type);
     });
     choices.appendChild(btn);
@@ -613,53 +1096,43 @@ function showPromotion() {
 function updateStatusBar() {
   const bar = document.getElementById('status-bar');
   bar.className = 'status-bar';
-  bar.innerHTML = '';
+
+  if (isSpectator) { bar.textContent = `👁 Assistindo — ${engine.turn === 'w' ? 'Brancas' : 'Pretas'} jogam`; return; }
 
   if (aiThinking) {
-    bar.innerHTML = `IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>`;
+    bar.innerHTML = 'IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>';
     return;
   }
 
   const isMyTurn = engine.turn === myColor;
   const msgs = {
-    playing:   isMyTurn ? 'Sua vez'                    : (gameMode==='ai' ? 'IA pensando...' : 'Vez do oponente'),
-    check:     isMyTurn ? '⚠ Xeque! Defenda seu rei'   : 'Oponente está em xeque',
+    playing:   isMyTurn ? 'Sua vez' : (gameMode==='ai' ? 'IA pensando...' : 'Vez do oponente'),
+    check:     isMyTurn ? '⚠ Xeque! Defenda seu rei' : 'Oponente está em xeque',
     checkmate: 'Xeque-mate!',
     stalemate: 'Afogamento!'
   };
-
   bar.textContent = msgs[engine.status] || '';
   if (engine.status==='check'   && isMyTurn) bar.classList.add('check');
   if (engine.status==='playing' && isMyTurn) bar.classList.add('your-turn');
 }
 
 /* =====================================================
-   HISTÓRICO
+   HISTÓRICO DE MOVIMENTOS
 ===================================================== */
 function updateMoveHistory() {
   const box = document.getElementById('move-history');
   box.innerHTML = '';
-  const moves = engine.history;
-
-  for (let i = 0; i < moves.length; i += 2) {
+  for (let i = 0; i < engine.history.length; i += 2) {
     const row = document.createElement('div');
     row.className = 'move-row';
-
     const num = document.createElement('span');
     num.className = 'move-num';
     num.textContent = (Math.floor(i/2)+1) + '.';
-
     const w = document.createElement('span');
-    w.className = 'move-san';
-    w.textContent = moves[i] || '';
-
+    w.className = 'move-san'; w.textContent = engine.history[i] || '';
     const b = document.createElement('span');
-    b.className = 'move-san';
-    b.textContent = moves[i+1] || '';
-
-    row.appendChild(num);
-    row.appendChild(w);
-    row.appendChild(b);
+    b.className = 'move-san'; b.textContent = engine.history[i+1] || '';
+    row.appendChild(num); row.appendChild(w); row.appendChild(b);
     box.appendChild(row);
   }
   box.scrollTop = box.scrollHeight;
@@ -674,40 +1147,27 @@ function updateCaptured() {
   const render = (capturedColor, elId) => {
     const el = document.getElementById(elId);
     if (!el) return;
+    const pieces = [...engine.captured[capturedColor]].sort((a,b)=>(order[b]||0)-(order[a]||0));
     el.innerHTML = '';
-
-    const pieces = [...engine.captured[capturedColor]]
-      .sort((a, b) => (order[b]||0) - (order[a]||0));
-
-    if (pieces.length === 0) return;
-
+    if (!pieces.length) return;
     const myScore  = pieces.reduce((s,t) => s+(order[t]||0), 0);
-    const oppColor = capturedColor === 'w' ? 'b' : 'w';
-    const oppScore = engine.captured[oppColor].reduce((s,t) => s+(order[t]||0), 0);
-    const adv      = myScore - oppScore;
-
+    const oppScore = engine.captured[capturedColor==='w'?'b':'w'].reduce((s,t)=>s+(order[t]||0),0);
+    const adv = myScore - oppScore;
     pieces.forEach(type => {
       const span = document.createElement('span');
-      span.className = 'cap-piece ' + (capturedColor === 'w' ? 'cap-black' : 'cap-white');
+      span.className = 'cap-piece ' + (capturedColor==='w' ? 'cap-black' : 'cap-white');
       span.textContent = SYMBOLS[capturedColor + type];
       el.appendChild(span);
     });
-
     if (adv > 0) {
       const s = document.createElement('span');
-      s.className = 'advantage-score';
-      s.textContent = '+' + adv;
+      s.className = 'advantage-score'; s.textContent = '+' + adv;
       el.appendChild(s);
     }
   };
 
-  if (myColor === 'w') {
-    render('b', 'captured-bottom');
-    render('w', 'captured-top');
-  } else {
-    render('w', 'captured-bottom');
-    render('b', 'captured-top');
-  }
+  if (myColor === 'w') { render('b','captured-bottom'); render('w','captured-top'); }
+  else                  { render('w','captured-bottom'); render('b','captured-top'); }
 }
 
 /* =====================================================
@@ -723,7 +1183,7 @@ function updateTurnCards() {
    RESIGNAR
 ===================================================== */
 async function resign() {
-  if (!gameActive) return;
+  if (!gameActive || isSpectator) return;
   if (!confirm('Tem certeza que deseja resignar?')) return;
   gameActive = false;
 
@@ -732,6 +1192,7 @@ async function resign() {
     await roomRef.update({ status:'resigned', winner:enemy, state:engine.serialize() }).catch(()=>{});
   }
 
+  saveGame('resigned');
   showGameOver('Você resignou', gameMode==='ai' ? 'A IA venceu.' : 'O oponente venceu.');
 }
 
@@ -743,10 +1204,10 @@ function showGameOver(title, msg) {
   document.getElementById('gameover-msg').textContent   = msg;
 
   const icon = document.getElementById('gameover-icon');
-  if (title.includes('🏆') || title.includes('Venceu')) icon.textContent = '🏆';
-  else if (title.includes('Empate'))                    icon.textContent = '🤝';
-  else if (title.includes('resignou'))                  icon.textContent = '🏳';
-  else                                                   icon.textContent = '♟';
+  icon.textContent = title.includes('🏆') ? '🏆'
+    : title.includes('Empate')  ? '🤝'
+    : title.includes('resignou') ? '🏳'
+    : '♟';
 
   document.getElementById('btn-resign').classList.add('hidden');
   document.getElementById('btn-new-game').classList.remove('hidden');
