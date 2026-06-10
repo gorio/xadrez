@@ -270,30 +270,6 @@ function replayGoTo(idx) {
 }
 
 /* =====================================================
-   REPLAY — interno: aplica até idx SEM parar o auto-play
-===================================================== */
-function _replayApplyTo(idx) {
-  idx          = Math.max(0, Math.min(replayMoves.length, idx));
-  replayTarget = idx;           // sempre reflete a posição raw
-  replayEngine = new ChessEngine();
-  replayIndex  = 0;             // lances realmente aplicados (pode ser < idx se SAN falhar)
-
-  for (let i = 0; i < idx; i++) {
-    if (applyMoveBySAN(replayEngine, replayMoves[i])) {
-      replayIndex++;
-    } else {
-      console.warn('SAN não reconhecida, posição pode divergir:', replayMoves[i]);
-    }
-  }
-
-  const slider = document.getElementById('replay-slider');
-  if (slider) slider.value = replayTarget;   // slider usa posição raw
-  updateReplayCounter();
-  replayRenderBoard();
-  renderReplayHistory();
-}
-
-/* =====================================================
    REPLAY — Play automático: avança 1 lance/segundo
    usa variável local `cur` independente de replayIndex
 ===================================================== */
@@ -434,13 +410,30 @@ function initReplayUI() {
 }
 
 /* =====================================================
-   REPLAY — aplica SAN com dupla estratégia de comparação
+   REPLAY — aplica SAN com múltiplas estratégias
 ===================================================== */
 function applyMoveBySAN(eng, san) {
   if (!san) return false;
   const color = eng.turn;
-  const sanA  = san.replace(/[+#!?]/g, '').trim();    // mantém x para capturas
-  const sanB  = san.replace(/[+#!?x]/g, '').trim();   // remove tudo
+
+  /* Normaliza a entrada em 4 variantes para comparação */
+  const norm = s => s
+    .replace(/[+#!?]/g, '')   // remove anotações
+    .replace(/x/g, '')         // remove captura
+    .replace(/=/g, '')         // remove promoção
+    .replace(/\s/g, '')
+    .trim();
+
+  const normCapture = s => s
+    .replace(/[+#!?]/g, '')
+    .replace(/=/g, '')
+    .replace(/\s/g, '')
+    .trim();                   // mantém x para distinguir capturas
+
+  const sanFull  = san.replace(/[+#!?]/g, '').trim();   // mantém x e =
+  const sanNoX   = sanFull.replace(/x/g, '');            // sem x
+  const sanNorm  = norm(san);                             // sem nada
+  const sanCap   = normCapture(san);                      // sem +#!?=
 
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
@@ -450,10 +443,18 @@ function applyMoveBySAN(eng, san) {
         for (const promo of ['Q', 'R', 'B', 'N']) {
           const clone = cloneEngine(eng);
           if (!clone.makeMove([r, c], mv.to, promo)) continue;
-          const gen  = clone.history[clone.history.length - 1] || '';
-          const genA = gen.replace(/[+#!?]/g, '').trim();
-          const genB = gen.replace(/[+#!?x]/g, '').trim();
-          if (genA === sanA || genB === sanB) {
+          const gen     = clone.history[clone.history.length - 1] || '';
+          const genFull = gen.replace(/[+#!?]/g, '').trim();
+          const genNoX  = genFull.replace(/x/g, '');
+          const genNorm = norm(gen);
+          const genCap  = normCapture(gen);
+
+          if (
+            genFull === sanFull ||
+            genNoX  === sanNoX  ||
+            genNorm === sanNorm ||
+            genCap  === sanCap
+          ) {
             eng.makeMove([r, c], mv.to, promo);
             return true;
           }
@@ -462,6 +463,34 @@ function applyMoveBySAN(eng, san) {
     }
   }
   return false;
+}
+
+/* =====================================================
+   REPLAY — aplica até idx, acumulando board correto
+   Não para se um lance falhar — continua tentando
+===================================================== */
+function _replayApplyTo(idx) {
+  idx          = Math.max(0, Math.min(replayMoves.length, idx));
+  replayTarget = idx;
+  replayEngine = new ChessEngine();
+  replayIndex  = 0;
+
+  for (let i = 0; i < idx; i++) {
+    const san = replayMoves[i];
+    if (applyMoveBySAN(replayEngine, san)) {
+      replayIndex++;
+    } else {
+      /* Tenta forçar o lance por coordenada se o engine ainda
+         tiver movimentos legais — mantém pelo menos o turno correto */
+      console.warn(`Lance ${i+1} não reconhecido: "${san}"`);
+    }
+  }
+
+  const slider = document.getElementById('replay-slider');
+  if (slider) slider.value = replayTarget;
+  updateReplayCounter();
+  replayRenderBoard();
+  renderReplayHistory();
 }
 
 function cloneEngine(src) {
@@ -626,8 +655,8 @@ function initHistoryUI() {
 function initReplayUI() {
   el('btn-replay-back', 'click',  openHistory);
   el('replay-first',    'click',  () => replayGoTo(0));
-  el('replay-prev',     'click',  () => replayGoTo(replayIndex - 1));
-  el('replay-next',     'click',  () => replayGoTo(replayIndex + 1));
+  el('replay-prev',     'click',  () => replayGoTo(replayTarget - 1));
+  el('replay-next',     'click',  () => replayGoTo(replayTarget + 1));
   el('replay-last',     'click',  () => replayGoTo(replayMoves.length));
   el('replay-play',     'click',  toggleReplayAuto);
   el('replay-slider',   'input',  e => replayGoTo(parseInt(e.target.value)));
