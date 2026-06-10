@@ -2,14 +2,13 @@
    CONFIGURAÇÃO FIREBASE
 ===================================================== */
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCa0WmUo1PIrlaYW6Ei8ZZK3XLZ4i0gIfo",
-  authDomain: "golf-oscar-romeo.firebaseapp.com",
-  projectId: "golf-oscar-romeo",
-  storageBucket: "golf-oscar-romeo.firebasestorage.app",
-  databaseURL: "https://golf-oscar-romeo-default-rtdb.firebaseio.com",
+  apiKey:            "AIzaSyCa0WmUo1PIrlaYW6Ei8ZZK3XLZ4i0gIfo",
+  authDomain:        "golf-oscar-romeo.firebaseapp.com",
+  projectId:         "golf-oscar-romeo",
+  storageBucket:     "golf-oscar-romeo.firebasestorage.app",
+  databaseURL:       "https://golf-oscar-romeo-default-rtdb.firebaseio.com",
   messagingSenderId: "71631208569",
-  appId: "1:71631208569:web:e7a1cc7ad20903ce5ad4a8",
-  measurementId: "G-9TKPXNPL54"
+  appId:             "1:71631208569:web:e7a1cc7ad20903ce5ad4a8"
 };
 
 const SYMBOLS = {
@@ -21,23 +20,23 @@ const SYMBOLS = {
    ESTADO GLOBAL
 ===================================================== */
 let db, fbAuth, currentUser = null;
-let engine          = new ChessEngine();
-let ai              = new ChessAI();
-let myColor         = null;
-let myId            = 'guest_' + Math.random().toString(36).slice(2, 8);
-let roomCode        = null;
-let roomRef         = null;
-let specRef         = null;
-let selectedSq      = null;
-let legalMovesCache = [];
-let pendingPromotion = null;
-let gameActive      = false;
-let gameMode        = 'multiplayer';
-let aiColor         = 'b';
-let aiThinking      = false;
-let selectedDiff    = 'intermediario';
+let engine             = new ChessEngine();
+let ai                 = new ChessAI();
+let myColor            = null;
+let myId               = 'guest_' + Math.random().toString(36).slice(2, 8);
+let roomCode           = null;
+let roomRef            = null;
+let specRef            = null;
+let selectedSq         = null;
+let legalMovesCache    = [];
+let pendingPromotion   = null;
+let gameActive         = false;
+let gameMode           = 'multiplayer';
+let aiColor            = 'b';
+let aiThinking         = false;
+let selectedDiff       = 'intermediario';
 let selectedPlayerColor = 'w';
-let isSpectator     = false;
+let isSpectator        = false;
 let opponentNameGlobal = 'Oponente';
 
 /* replay */
@@ -46,6 +45,18 @@ let replayIndex    = 0;
 let replayEngine   = null;
 let replayInterval = null;
 let replayGameData = null;
+
+/* =====================================================
+   HELPER — addEventListener seguro contra null
+===================================================== */
+function el(id, event, handler) {
+  const element = document.getElementById(id);
+  if (element) {
+    element.addEventListener(event, handler);
+  } else {
+    console.warn(`#${id} não encontrado para evento '${event}'`);
+  }
+}
 
 /* =====================================================
    BOOT
@@ -60,21 +71,19 @@ window.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  /* Inicializa apenas os listeners da tela de auth,
-     que sempre existem no DOM */
   initAuthUI();
-
-  /* Os demais listeners dependem de elementos que só
-     existem nas outras telas — inicializa com segurança */
-  safeInitOtherUI();
+  initLobbyUI();
+  initGameUI();
+  initHistoryUI();
+  initReplayUI();
 
   fbAuth.onAuthStateChanged(user => {
     currentUser = user;
     if (user) {
       myId = user.uid;
       const name = user.displayName || user.email?.split('@')[0] || 'Jogador';
-      const headerUsername = document.getElementById('header-username');
-      if (headerUsername) headerUsername.textContent = name;
+      const headerEl = document.getElementById('header-username');
+      if (headerEl) headerEl.textContent = name;
       db.ref('users/' + user.uid).update({
         displayName: name,
         email:       user.email || '',
@@ -88,63 +97,116 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-function safeInitOtherUI() {
-  initLobbyUI();
-  initGameUI();
-  initHistoryUI();
-  initReplayUI();
+/* =====================================================
+   AUTH — funções de login
+===================================================== */
+async function loginWithEmail() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-password').value;
+  if (!email || !pass) { showAuthError('Preencha e-mail e senha.'); return; }
+  try {
+    await fbAuth.signInWithEmailAndPassword(email, pass);
+  } catch (e) { showAuthError(authErrorMsg(e.code)); }
+}
+
+async function loginWithGoogle() {
+  try {
+    await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  } catch (e) {
+    if (e.code !== 'auth/popup-closed-by-user') showAuthError(authErrorMsg(e.code));
+  }
+}
+
+async function registerWithEmail() {
+  const name  = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const pass  = document.getElementById('reg-password').value;
+  if (!name)           { showAuthError('Informe seu nome.'); return; }
+  if (!email)          { showAuthError('Informe seu e-mail.'); return; }
+  if (pass.length < 6) { showAuthError('Senha mínima de 6 caracteres.'); return; }
+  try {
+    const cred = await fbAuth.createUserWithEmailAndPassword(email, pass);
+    await cred.user.updateProfile({ displayName: name });
+    await cred.user.reload();
+  } catch (e) { showAuthError(authErrorMsg(e.code)); }
+}
+
+async function loginAsGuest() {
+  try {
+    const cred = await fbAuth.signInAnonymously();
+    await cred.user.updateProfile({ displayName: 'Visitante' });
+  } catch (e) { showAuthError('Erro ao entrar como visitante.'); }
+}
+
+function authErrorMsg(code) {
+  return ({
+    'auth/user-not-found':       'Usuário não encontrado.',
+    'auth/wrong-password':       'Senha incorreta.',
+    'auth/email-already-in-use': 'E-mail já cadastrado.',
+    'auth/invalid-email':        'E-mail inválido.',
+    'auth/weak-password':        'Senha muito fraca.',
+    'auth/too-many-requests':    'Muitas tentativas. Tente mais tarde.'
+  })[code] || 'Erro ao autenticar.';
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  if (el) el.textContent = msg;
+}
+function clearAuthError() {
+  const el = document.getElementById('auth-error');
+  if (el) el.textContent = '';
 }
 
 /* =====================================================
-   AUTH
+   INIT — Auth UI
 ===================================================== */
 function initAuthUI() {
-  /* Tabs login/cadastro */
   document.querySelectorAll('.auth-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       const target = tab.dataset.tab;
-      const tabLogin    = document.getElementById('tab-login');
-      const tabRegister = document.getElementById('tab-register');
-      if (tabLogin)    tabLogin.classList.toggle('hidden', target !== 'login');
-      if (tabRegister) tabRegister.classList.toggle('hidden', target !== 'register');
+      const tl = document.getElementById('tab-login');
+      const tr = document.getElementById('tab-register');
+      if (tl) tl.classList.toggle('hidden', target !== 'login');
+      if (tr) tr.classList.toggle('hidden', target !== 'register');
       clearAuthError();
     });
   });
 
-  el('btn-login-email',    'click',   loginWithEmail);
-  el('login-password',     'keydown', e => { if (e.key === 'Enter') loginWithEmail(); });
-  el('btn-login-google',   'click',   loginWithGoogle);
-  el('btn-register',       'click',   registerWithEmail);
-  el('btn-register-google','click',   loginWithGoogle);
-  el('btn-guest',          'click',   loginAsGuest);
+  el('btn-login-email',     'click',   loginWithEmail);
+  el('login-password',      'keydown', e => { if (e.key === 'Enter') loginWithEmail(); });
+  el('btn-login-google',    'click',   loginWithGoogle);
+  el('btn-register',        'click',   registerWithEmail);
+  el('btn-register-google', 'click',   loginWithGoogle);
+  el('btn-guest',           'click',   loginAsGuest);
 }
 
 /* =====================================================
-   LOBBY
+   INIT — Lobby UI
 ===================================================== */
 function initLobbyUI() {
-  /* Logout fica no lobby header */
-  el('btn-logout', 'click', () => fbAuth.signOut());
+  el('btn-logout',  'click', () => fbAuth.signOut());
+  el('btn-history', 'click', openHistory);
+  el('btn-create',  'click', createGame);
+  el('btn-join',    'click', joinGame);
+  el('input-room',  'keydown', e => { if (e.key === 'Enter') joinGame(); });
+  el('btn-spectate',    'click',   spectateGame);
+  el('input-spectate',  'keydown', e => { if (e.key === 'Enter') spectateGame(); });
+  el('btn-start-ai',    'click',   startAIGame);
 
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       gameMode = btn.dataset.mode;
-      const panelMP = document.getElementById('panel-multiplayer');
-      const panelAI = document.getElementById('panel-ai');
-      if (panelMP) panelMP.classList.toggle('hidden', gameMode !== 'multiplayer');
-      if (panelAI) panelAI.classList.toggle('hidden', gameMode !== 'ai');
+      const mp = document.getElementById('panel-multiplayer');
+      const pa = document.getElementById('panel-ai');
+      if (mp) mp.classList.toggle('hidden', gameMode !== 'multiplayer');
+      if (pa) pa.classList.toggle('hidden', gameMode !== 'ai');
     });
   });
-
-  el('btn-create',   'click',   createGame);
-  el('btn-join',     'click',   joinGame);
-  el('input-room',   'keydown', e => { if (e.key === 'Enter') joinGame(); });
-  el('btn-spectate', 'click',   spectateGame);
-  el('input-spectate','keydown',e => { if (e.key === 'Enter') spectateGame(); });
 
   document.querySelectorAll('.color-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -161,48 +223,35 @@ function initLobbyUI() {
       selectedDiff = btn.dataset.level;
     });
   });
-
-  el('btn-start-ai', 'click', startAIGame);
-  el('btn-history',  'click', openHistory);
 }
 
 /* =====================================================
-   JOGO — CONTROLES
+   INIT — Game UI
 ===================================================== */
 function initGameUI() {
-  el('btn-cancel',   'click', cancelGame);
-  el('btn-copy',     'click', copyRoomCode);
-  el('btn-resign',   'click', resign);
-  el('btn-new-game', 'click', goLobby);
-  el('btn-back-lobby','click', () => {
-    if (specRef) { specRef.off(); specRef = null; }
-    goLobby();
-  });
+  el('btn-cancel',    'click', cancelGame);
+  el('btn-copy',      'click', copyRoomCode);
+  el('btn-resign',    'click', resign);
+  el('btn-new-game',  'click', goLobby);
+  el('btn-back-lobby','click', () => { if (specRef) { specRef.off(); specRef = null; } goLobby(); });
 
   el('btn-gameover-new', 'click', () => {
     hideModal('modal-gameover');
-    if (gameMode === 'ai') startAIGame();
-    else goLobby();
+    if (gameMode === 'ai') startAIGame(); else goLobby();
   });
-  el('btn-gameover-history', 'click', () => {
-    hideModal('modal-gameover');
-    openHistory();
-  });
-  el('btn-gameover-lobby', 'click', () => {
-    hideModal('modal-gameover');
-    goLobby();
-  });
+  el('btn-gameover-history', 'click', () => { hideModal('modal-gameover'); openHistory(); });
+  el('btn-gameover-lobby',   'click', () => { hideModal('modal-gameover'); goLobby(); });
 }
 
 /* =====================================================
-   HISTÓRICO
+   INIT — History UI
 ===================================================== */
 function initHistoryUI() {
   el('btn-history-back', 'click', goLobby);
 }
 
 /* =====================================================
-   REPLAY
+   INIT — Replay UI
 ===================================================== */
 function initReplayUI() {
   el('btn-replay-back', 'click',  openHistory);
@@ -215,26 +264,15 @@ function initReplayUI() {
 }
 
 /* =====================================================
-   HELPER — registra listener com proteção contra null
-===================================================== */
-function el(id, event, handler) {
-  const element = document.getElementById(id);
-  if (element) {
-    element.addEventListener(event, handler);
-  } else {
-    console.warn(`Elemento #${id} não encontrado ao registrar evento '${event}'.`);
-  }
-}
-
-/* =====================================================
    NAVEGAÇÃO
 ===================================================== */
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-' + name).classList.add('active');
+  const target = document.getElementById('screen-' + name);
+  if (target) target.classList.add('active');
 }
-function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
-function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
+function showModal(id) { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); }
+function hideModal(id) { const e = document.getElementById(id); if (e) e.classList.add('hidden'); }
 
 function goLobby() {
   gameActive  = false;
@@ -244,17 +282,19 @@ function goLobby() {
   if (specRef) { specRef.off(); specRef = null; }
   engine.reset();
   selectedSq = null; legalMovesCache = [];
-  document.getElementById('input-room').value = '';
-  document.getElementById('input-spectate').value = '';
+  const ir = document.getElementById('input-room');
+  const is = document.getElementById('input-spectate');
+  if (ir) ir.value = '';
+  if (is) is.value = '';
   clearLobbyError();
   showScreen('lobby');
 }
 
-function showLobbyError(msg) { document.getElementById('lobby-error').textContent = msg; }
-function clearLobbyError()   { document.getElementById('lobby-error').textContent = ''; }
+function showLobbyError(msg) { const e = document.getElementById('lobby-error'); if (e) e.textContent = msg; }
+function clearLobbyError()   { const e = document.getElementById('lobby-error'); if (e) e.textContent = ''; }
 
 /* =====================================================
-   SALVAR HISTÓRICO
+   SALVAR JOGO NO HISTÓRICO
 ===================================================== */
 async function saveGame(result) {
   if (!currentUser || currentUser.isAnonymous) return null;
@@ -276,9 +316,12 @@ async function saveGame(result) {
   try {
     const ref = await db.ref('games').push(record);
     await db.ref(`users/${currentUser.uid}/games/${ref.key}`).set({
-      result, mode: gameMode, playedAt: record.playedAt,
-      totalMoves: record.totalMoves, opponentName: opponentNameGlobal,
-      difficulty: record.difficulty
+      result,
+      mode:         gameMode,
+      playedAt:     record.playedAt,
+      totalMoves:   record.totalMoves,
+      opponentName: opponentNameGlobal,
+      difficulty:   record.difficulty
     });
     return ref.key;
   } catch (e) {
@@ -290,19 +333,15 @@ async function saveGame(result) {
 /* =====================================================
    HISTÓRICO
 ===================================================== */
-function initHistoryUI() {
-  document.getElementById('btn-history-back').addEventListener('click', goLobby);
-}
-
 async function openHistory() {
   showScreen('history');
   const listEl  = document.getElementById('history-list');
   const statsEl = document.getElementById('history-stats');
-  listEl.innerHTML  = '<div class="history-loading">Carregando...</div>';
-  statsEl.innerHTML = '';
+  if (listEl)  listEl.innerHTML  = '<div class="history-loading">Carregando...</div>';
+  if (statsEl) statsEl.innerHTML = '';
 
   if (!currentUser || currentUser.isAnonymous) {
-    listEl.innerHTML = '<div class="history-empty">Faça login para ver seu histórico.</div>';
+    if (listEl) listEl.innerHTML = '<div class="history-empty">Faça login para ver seu histórico.</div>';
     return;
   }
 
@@ -312,7 +351,7 @@ async function openHistory() {
 
     const raw = snap.val();
     if (!raw) {
-      listEl.innerHTML = '<div class="history-empty">Nenhuma partida encontrada.<br>Jogue sua primeira partida!</div>';
+      if (listEl) listEl.innerHTML = '<div class="history-empty">Nenhuma partida ainda.<br>Jogue sua primeira partida!</div>';
       return;
     }
 
@@ -320,29 +359,25 @@ async function openHistory() {
       .map(([id, g]) => ({ id, ...g }))
       .sort((a, b) => b.playedAt - a.playedAt);
 
-    /* Stats */
     const wins   = games.filter(g => g.result === 'win').length;
     const losses = games.filter(g => ['loss','resigned'].includes(g.result)).length;
     const draws  = games.filter(g => g.result === 'draw').length;
-    statsEl.innerHTML = `
+    if (statsEl) statsEl.innerHTML = `
       <span class="stat stat-win">✓ ${wins}</span>
       <span class="stat stat-draw">= ${draws}</span>
       <span class="stat stat-loss">✗ ${losses}</span>
     `;
 
-    listEl.innerHTML = '';
+    if (listEl) listEl.innerHTML = '';
     games.forEach(game => {
       const card = document.createElement('div');
       card.className = 'history-card';
 
       const resClass = { win:'result-win', loss:'result-loss', draw:'result-draw', resigned:'result-loss' }[game.result] || '';
-      const resText  = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' }[game.result] || game.result;
-      const modeText = game.mode === 'ai'
-        ? `🤖 IA (${game.difficulty || ''})`
-        : '👥 Multiplayer';
+      const resText  = { win:'Vitória ✓', loss:'Derrota ✗', draw:'Empate =', resigned:'Resignou' }[game.result] || game.result;
+      const modeText = game.mode === 'ai' ? `🤖 IA (${game.difficulty || ''})` : '👥 Multiplayer';
       const date = new Date(game.playedAt).toLocaleDateString('pt-BR', {
-        day:'2-digit', month:'2-digit', year:'2-digit',
-        hour:'2-digit', minute:'2-digit'
+        day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'
       });
 
       card.innerHTML = `
@@ -356,16 +391,16 @@ async function openHistory() {
         </div>
         <div class="history-card-right">
           <span class="history-date">${date}</span>
-          <button class="btn btn-small btn-secondary" data-id="${game.id}">▶ Replay</button>
+          <button class="btn btn-small btn-secondary">▶ Replay</button>
         </div>
       `;
 
       card.querySelector('button').addEventListener('click', () => loadReplay(game.id));
-      listEl.appendChild(card);
+      if (listEl) listEl.appendChild(card);
     });
 
   } catch (e) {
-    listEl.innerHTML = '<div class="history-empty">Erro ao carregar histórico.</div>';
+    if (listEl) listEl.innerHTML = '<div class="history-empty">Erro ao carregar histórico.</div>';
     console.error(e);
   }
 }
@@ -373,18 +408,6 @@ async function openHistory() {
 /* =====================================================
    REPLAY
 ===================================================== */
-function initReplayUI() {
-  document.getElementById('btn-replay-back').addEventListener('click', openHistory);
-  document.getElementById('replay-first').addEventListener('click', () => replayGoTo(0));
-  document.getElementById('replay-prev').addEventListener('click',  () => replayGoTo(replayIndex - 1));
-  document.getElementById('replay-next').addEventListener('click',  () => replayGoTo(replayIndex + 1));
-  document.getElementById('replay-last').addEventListener('click',  () => replayGoTo(replayMoves.length));
-  document.getElementById('replay-play').addEventListener('click',  toggleReplayAuto);
-  document.getElementById('replay-slider').addEventListener('input', e => {
-    replayGoTo(parseInt(e.target.value));
-  });
-}
-
 async function loadReplay(gameId) {
   showScreen('replay');
   try {
@@ -393,20 +416,18 @@ async function loadReplay(gameId) {
     if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
 
     const isWhite = replayGameData.myColor === 'w';
-    document.getElementById('replay-label-bottom').textContent =
-      isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`;
-    document.getElementById('replay-label-top').textContent =
-      isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`;
-    document.getElementById('replay-avatar-bottom').textContent = isWhite ? '♙' : '♟';
-    document.getElementById('replay-avatar-top').textContent    = isWhite ? '♟' : '♙';
+    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+    lbl('replay-label-bottom', isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`);
+    lbl('replay-label-top',    isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`);
+    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
+    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
 
     replayMoves  = replayGameData.moves ? replayGameData.moves.split('|').filter(Boolean) : [];
     replayIndex  = 0;
     replayEngine = new ChessEngine();
 
     const slider = document.getElementById('replay-slider');
-    slider.max   = replayMoves.length;
-    slider.value = 0;
+    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
 
     buildReplayBoard();
     replayRenderBoard();
@@ -414,8 +435,7 @@ async function loadReplay(gameId) {
     updateReplayCounter();
 
     const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
-    document.getElementById('replay-status').textContent =
-      `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`;
+    lbl('replay-status', `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
 
   } catch (e) {
     console.error(e);
@@ -426,40 +446,34 @@ async function loadReplay(gameId) {
 
 function buildReplayBoard() {
   const boardEl = document.getElementById('replay-chessboard');
+  if (!boardEl) return;
   boardEl.innerHTML = '';
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       const sq = document.createElement('div');
       sq.className = 'square';
-      sq.dataset.row = row;
-      sq.dataset.col = col;
+      sq.dataset.row = row; sq.dataset.col = col;
       boardEl.appendChild(sq);
     }
   }
-
   ['replay-coords-file-top','replay-coords-file-bottom'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
+    const el = document.getElementById(id); if (!el) return;
     el.innerHTML = '';
     'abcdefgh'.split('').forEach(f => {
       const s = document.createElement('span');
       s.className = 'coord-label';
       s.style.width = 'calc(var(--board-size) / 8)';
-      s.textContent = f;
-      el.appendChild(s);
+      s.textContent = f; el.appendChild(s);
     });
   });
-
   ['replay-coords-rank-left','replay-coords-rank-right'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
+    const el = document.getElementById(id); if (!el) return;
     el.innerHTML = '';
     '87654321'.split('').forEach(r => {
       const s = document.createElement('span');
       s.className = 'coord-label';
       s.style.height = 'calc(var(--board-size) / 8)';
-      s.textContent = r;
-      el.appendChild(s);
+      s.textContent = r; el.appendChild(s);
     });
   });
 }
@@ -467,27 +481,23 @@ function buildReplayBoard() {
 function replayGoTo(targetIndex) {
   stopReplayAuto();
   targetIndex = Math.max(0, Math.min(replayMoves.length, targetIndex));
-
-  /* Reconstrói do zero até targetIndex aplicando movimentos SAN */
   replayEngine = new ChessEngine();
   let applied  = 0;
   for (let i = 0; i < targetIndex; i++) {
     if (applyMoveBySAN(replayEngine, replayMoves[i])) applied++;
   }
   replayIndex = applied;
-
-  document.getElementById('replay-slider').value = replayIndex;
+  const slider = document.getElementById('replay-slider');
+  if (slider) slider.value = replayIndex;
   updateReplayCounter();
   replayRenderBoard();
   renderReplayHistory();
 }
 
-/* Encontra e executa o movimento legal que produz a notação SAN */
 function applyMoveBySAN(eng, san) {
   if (!san) return false;
-  const color = eng.turn;
+  const color    = eng.turn;
   const sanClean = san.replace(/[+#!?]/g, '');
-
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       if (eng.board[r]?.[c]?.color !== color) continue;
@@ -495,13 +505,9 @@ function applyMoveBySAN(eng, san) {
       for (const mv of legal) {
         for (const promo of ['Q','R','B','N']) {
           const clone = cloneEngine(eng);
-          const ok = clone.makeMove([r,c], mv.to, promo);
-          if (!ok) continue;
+          if (!clone.makeMove([r,c], mv.to, promo)) continue;
           const genSan = (clone.history[clone.history.length - 1] || '').replace(/[+#!?]/g, '');
-          if (genSan === sanClean) {
-            eng.makeMove([r,c], mv.to, promo);
-            return true;
-          }
+          if (genSan === sanClean) { eng.makeMove([r,c], mv.to, promo); return true; }
         }
       }
     }
@@ -523,19 +529,18 @@ function cloneEngine(src) {
 }
 
 function replayRenderBoard() {
-  document.getElementById('replay-chessboard').querySelectorAll('.square').forEach(sq => {
+  const boardEl = document.getElementById('replay-chessboard');
+  if (!boardEl) return;
+  boardEl.querySelectorAll('.square').forEach(sq => {
     const vr = parseInt(sq.dataset.row);
     const vc = parseInt(sq.dataset.col);
-    const isLight = (vr + vc) % 2 === 0;
-    sq.className = 'square ' + (isLight ? 'light' : 'dark');
+    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
     sq.innerHTML = '';
-
     if (replayEngine.lastMove) {
       const [fr, fc] = replayEngine.lastMove.from;
       const [tr, tc] = replayEngine.lastMove.to;
       if ((vr===fr && vc===fc) || (vr===tr && vc===tc)) sq.classList.add('last-move');
     }
-
     const piece = replayEngine.piece(vr, vc);
     if (piece) {
       const span = document.createElement('span');
@@ -548,29 +553,21 @@ function replayRenderBoard() {
 
 function renderReplayHistory() {
   const box = document.getElementById('replay-move-history');
+  if (!box) return;
   box.innerHTML = '';
   for (let i = 0; i < replayMoves.length; i += 2) {
     const row = document.createElement('div');
     row.className = 'move-row';
-
     const num = document.createElement('span');
-    num.className = 'move-num';
-    num.textContent = (Math.floor(i/2)+1) + '.';
-
+    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
     const w = document.createElement('span');
     w.className = 'move-san' + (replayIndex === i+1 ? ' move-active' : '');
-    w.textContent = replayMoves[i] || '';
-    w.style.cursor = 'pointer';
+    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
     w.addEventListener('click', () => replayGoTo(i+1));
-
     const b = document.createElement('span');
     b.className = 'move-san' + (replayIndex === i+2 ? ' move-active' : '');
     b.textContent = replayMoves[i+1] || '';
-    if (replayMoves[i+1]) {
-      b.style.cursor = 'pointer';
-      b.addEventListener('click', () => replayGoTo(i+2));
-    }
-
+    if (replayMoves[i+1]) { b.style.cursor = 'pointer'; b.addEventListener('click', () => replayGoTo(i+2)); }
     row.appendChild(num); row.appendChild(w); row.appendChild(b);
     box.appendChild(row);
   }
@@ -579,15 +576,16 @@ function renderReplayHistory() {
 }
 
 function updateReplayCounter() {
-  document.getElementById('replay-move-counter').textContent =
-    `Lance ${replayIndex} de ${replayMoves.length}`;
+  const el = document.getElementById('replay-move-counter');
+  if (el) el.textContent = `Lance ${replayIndex} de ${replayMoves.length}`;
 }
 
 function toggleReplayAuto() {
   if (replayInterval) {
     stopReplayAuto();
   } else {
-    document.getElementById('replay-play').textContent = '⏸ Pausar';
+    const btn = document.getElementById('replay-play');
+    if (btn) btn.textContent = '⏸ Pausar';
     replayInterval = setInterval(() => {
       if (replayIndex >= replayMoves.length) { stopReplayAuto(); return; }
       replayGoTo(replayIndex + 1);
@@ -605,61 +603,50 @@ function stopReplayAuto() {
    ESPECTADOR
 ===================================================== */
 async function spectateGame() {
-  const code = document.getElementById('input-spectate').value.trim().toUpperCase();
+  const input = document.getElementById('input-spectate');
+  const code  = input ? input.value.trim().toUpperCase() : '';
   clearLobbyError();
   if (code.length !== 6) { showLobbyError('Código deve ter 6 caracteres.'); return; }
 
   try {
     const snap = await db.ref('rooms/' + code).once('value');
     const data = snap.val();
-    if (!data)                     { showLobbyError('Sala não encontrada.'); return; }
+    if (!data)                    { showLobbyError('Sala não encontrada.'); return; }
     if (data.status === 'waiting') { showLobbyError('Partida ainda não começou.'); return; }
-    if (data.status === 'finished' || data.status === 'resigned') {
-      showLobbyError('Esta partida já encerrou.'); return;
-    }
+    if (['finished','resigned'].includes(data.status)) { showLobbyError('Partida já encerrou.'); return; }
 
-    isSpectator = true;
-    roomCode    = code;
-    myColor     = 'w';
+    isSpectator = true; roomCode = code; myColor = 'w';
     engine.deserialize(data.state);
 
-    document.getElementById('label-top').textContent    = data.blackName || 'Pretas';
-    document.getElementById('label-bottom').textContent = data.whiteName || 'Brancas';
-    document.getElementById('avatar-top').textContent   = '♟';
-    document.getElementById('avatar-bottom').textContent = '♙';
+    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+    lbl('label-top',     data.blackName || 'Pretas');
+    lbl('label-bottom',  data.whiteName || 'Brancas');
+    lbl('avatar-top',    '♟');
+    lbl('avatar-bottom', '♙');
 
-    buildBoard();
-    renderGame();
-    showScreen('game');
+    buildBoard(); renderGame(); showScreen('game');
 
-    document.getElementById('btn-resign').classList.add('hidden');
-    document.getElementById('btn-new-game').classList.add('hidden');
-    document.getElementById('btn-back-lobby').classList.remove('hidden');
-    document.getElementById('spectator-bar').classList.remove('hidden');
-    document.getElementById('status-bar').textContent = `👁 Assistindo — sala ${code}`;
+    const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
+    const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
+    hide('btn-resign'); hide('btn-new-game');
+    show('btn-back-lobby'); show('spectator-bar');
+    lbl('status-bar', `👁 Assistindo — sala ${code}`);
 
     specRef = db.ref('rooms/' + code);
     specRef.on('value', snap => {
-      const d = snap.val();
-      if (!d) return;
-      engine.deserialize(d.state);
-      renderGame();
+      const d = snap.val(); if (!d) return;
+      engine.deserialize(d.state); renderGame();
       const turn = d.state?.turn === 'w' ? 'Brancas' : 'Pretas';
-      document.getElementById('status-bar').textContent = `👁 ${turn} jogam — sala ${code}`;
-
+      lbl('status-bar', `👁 ${turn} jogam — sala ${code}`);
       if (['finished','resigned','abandoned'].includes(d.status)) {
-        document.getElementById('status-bar').textContent = '👁 Partida encerrada';
-        specRef.off();
+        lbl('status-bar', '👁 Partida encerrada'); specRef.off();
       }
     });
-
-  } catch (e) {
-    showLobbyError('Erro ao conectar: ' + e.message);
-  }
+  } catch (e) { showLobbyError('Erro ao conectar: ' + e.message); }
 }
 
 /* =====================================================
-   CRIAR PARTIDA (MULTIPLAYER)
+   CRIAR PARTIDA
 ===================================================== */
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -670,91 +657,67 @@ function generateRoomCode() {
 
 async function createGame() {
   const btn = document.getElementById('btn-create');
-  btn.disabled = true; btn.textContent = 'Criando...';
+  if (btn) { btn.disabled = true; btn.textContent = 'Criando...'; }
   clearLobbyError();
-
   try {
-    roomCode = generateRoomCode();
-    myColor  = 'w';
-    engine.reset();
+    roomCode = generateRoomCode(); myColor = 'w'; engine.reset();
     roomRef  = db.ref('rooms/' + roomCode);
-
     const myName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Jogador';
 
     await roomRef.set({
-      white:     myId,
-      whiteName: myName,
-      black:     null,
-      blackName: null,
-      state:     engine.serialize(),
-      createdAt: Date.now(),
-      status:    'waiting'
+      white: myId, whiteName: myName, black: null, blackName: null,
+      state: engine.serialize(), createdAt: Date.now(), status: 'waiting'
     });
 
     setTimeout(() => {
       if (!roomRef) return;
-      roomRef.once('value', snap => {
-        if (snap.val()?.status === 'waiting') { roomRef.remove(); goLobby(); }
-      });
+      roomRef.once('value', snap => { if (snap.val()?.status === 'waiting') { roomRef.remove(); goLobby(); } });
     }, 600000);
 
-    document.getElementById('display-room-code').textContent = roomCode;
+    const drc = document.getElementById('display-room-code');
+    if (drc) drc.textContent = roomCode;
     showScreen('waiting');
 
     roomRef.on('value', snap => {
-      const data = snap.val();
-      if (!data) return;
+      const data = snap.val(); if (!data) return;
       if (data.black && data.status === 'playing') {
         roomRef.off();
         opponentNameGlobal = data.blackName || 'Oponente';
         startMultiplayerGame(myName, opponentNameGlobal);
       }
     });
-
-  } catch (e) {
-    showLobbyError('Erro ao criar sala: ' + e.message);
-  } finally {
-    btn.disabled = false; btn.textContent = 'Criar Partida';
-  }
+  } catch (e) { showLobbyError('Erro ao criar sala: ' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Criar Partida'; } }
 }
 
 /* =====================================================
-   ENTRAR NA PARTIDA (MULTIPLAYER)
+   ENTRAR NA PARTIDA
 ===================================================== */
 async function joinGame() {
   const input = document.getElementById('input-room');
-  const code  = input.value.trim().toUpperCase();
+  const code  = input ? input.value.trim().toUpperCase() : '';
   clearLobbyError();
   if (code.length !== 6) { showLobbyError('Código deve ter 6 caracteres.'); return; }
 
   const btn = document.getElementById('btn-join');
-  btn.disabled = true; btn.textContent = 'Entrando...';
+  if (btn) { btn.disabled = true; btn.textContent = 'Entrando...'; }
 
   try {
     roomRef = db.ref('rooms/' + code);
     const snap = await roomRef.once('value');
     const data = snap.val();
-
     if (!data)                                          { showLobbyError('Sala não encontrada.');  roomRef=null; return; }
     if (data.black)                                     { showLobbyError('Sala já está cheia.');   roomRef=null; return; }
     if (['finished','resigned'].includes(data.status)) { showLobbyError('Partida já encerrada.'); roomRef=null; return; }
 
-    roomCode = code;
-    myColor  = 'b';
-    engine.deserialize(data.state);
-
+    roomCode = code; myColor = 'b'; engine.deserialize(data.state);
     const myName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Jogador';
     await roomRef.update({ black: myId, blackName: myName, status: 'playing' });
 
     opponentNameGlobal = data.whiteName || 'Oponente';
     startMultiplayerGame(myName, opponentNameGlobal);
-
-  } catch (e) {
-    showLobbyError('Erro ao entrar: ' + e.message);
-    roomRef = null;
-  } finally {
-    btn.disabled = false; btn.textContent = 'Entrar';
-  }
+  } catch (e) { showLobbyError('Erro ao entrar: ' + e.message); roomRef = null; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Entrar'; } }
 }
 
 async function cancelGame() {
@@ -765,61 +728,46 @@ async function cancelGame() {
 function copyRoomCode() {
   navigator.clipboard.writeText(roomCode).then(() => {
     const fb = document.getElementById('copy-feedback');
-    fb.textContent = 'Copiado!';
-    setTimeout(() => { fb.textContent = ''; }, 2000);
+    if (fb) { fb.textContent = 'Copiado!'; setTimeout(() => { fb.textContent = ''; }, 2000); }
   });
 }
 
 /* =====================================================
-   INICIAR JOGO MULTIPLAYER
+   INICIAR MULTIPLAYER
 ===================================================== */
 function startMultiplayerGame(myName, oppName) {
-  gameMode    = 'multiplayer';
-  gameActive  = true;
-  isSpectator = false;
-  selectedSq  = null; legalMovesCache = [];
+  gameMode = 'multiplayer'; gameActive = true; isSpectator = false;
+  selectedSq = null; legalMovesCache = [];
 
-  document.getElementById('avatar-bottom').textContent = myColor === 'w' ? '♙' : '♟';
-  document.getElementById('avatar-top').textContent    = myColor === 'w' ? '♟' : '♙';
-  document.getElementById('label-bottom').textContent  = `${myName} (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
-  document.getElementById('label-top').textContent     = `${oppName} (${myColor === 'w' ? 'Pretas' : 'Brancas'})`;
+  const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+  lbl('avatar-bottom', myColor === 'w' ? '♙' : '♟');
+  lbl('avatar-top',    myColor === 'w' ? '♟' : '♙');
+  lbl('label-bottom',  `${myName} (${myColor === 'w' ? 'Brancas' : 'Pretas'})`);
+  lbl('label-top',     `${oppName} (${myColor === 'w' ? 'Pretas' : 'Brancas'})`);
 
-  buildBoard();
-  renderGame();
-  showScreen('game');
-  document.getElementById('btn-resign').classList.remove('hidden');
-  document.getElementById('btn-new-game').classList.add('hidden');
-  document.getElementById('btn-back-lobby').classList.add('hidden');
-  document.getElementById('spectator-bar').classList.add('hidden');
+  buildBoard(); renderGame(); showScreen('game');
+
+  const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
+  const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
+  show('btn-resign'); hide('btn-new-game'); hide('btn-back-lobby'); hide('spectator-bar');
 
   roomRef.on('value', snap => {
-    const data = snap.val();
-    if (!data) return;
+    const data = snap.val(); if (!data) return;
 
     if (data.status === 'resigned' && data.winner !== myColor) {
-      engine.deserialize(data.state);
-      renderGame(); gameActive = false;
-      saveGame('win');
-      showGameOver('Vitória! 🏆', 'O oponente resignou.');
-      return;
+      engine.deserialize(data.state); renderGame(); gameActive = false;
+      saveGame('win'); showGameOver('Vitória! 🏆', 'O oponente resignou.'); return;
     }
     if (data.status === 'abandoned') {
-      gameActive = false;
-      saveGame('win');
-      showGameOver('Vitória! 🏆', 'O oponente abandonou.');
-      return;
+      gameActive = false; saveGame('win'); showGameOver('Vitória! 🏆', 'O oponente abandonou.'); return;
     }
-
     if (data.state && data.state.turn === myColor) {
-      engine.deserialize(data.state);
-      renderGame();
+      engine.deserialize(data.state); renderGame();
       if (engine.status === 'checkmate') {
-        gameActive = false;
-        saveGame('loss');
+        gameActive = false; saveGame('loss');
         showGameOver('Xeque-mate!', 'Você perdeu. Tente novamente!');
       } else if (engine.status === 'stalemate') {
-        gameActive = false;
-        saveGame('draw');
+        gameActive = false; saveGame('draw');
         showGameOver('Empate!', 'Afogamento.');
       }
     }
@@ -833,37 +781,33 @@ function startAIGame() {
   gameMode = 'ai';
   let playerColor = selectedPlayerColor;
   if (playerColor === 'random') playerColor = Math.random() < 0.5 ? 'w' : 'b';
-  myColor  = playerColor;
-  aiColor  = playerColor === 'w' ? 'b' : 'w';
+  myColor = playerColor; aiColor = playerColor === 'w' ? 'b' : 'w';
 
   ai.setDifficulty(selectedDiff);
   engine.reset();
-  gameActive  = true;
-  isSpectator = false;
-  selectedSq  = null; legalMovesCache = [];
+  gameActive = true; isSpectator = false;
+  selectedSq = null; legalMovesCache = [];
   opponentNameGlobal = `IA (${selectedDiff})`;
 
   const diffLabels = { iniciante:'Iniciante', intermediario:'Intermediário', avancado:'Avançado', expert:'Expert' };
-  document.getElementById('avatar-bottom').textContent = myColor === 'w' ? '♙' : '♟';
-  document.getElementById('avatar-top').textContent    = '🤖';
-  document.getElementById('label-bottom').textContent  = `Você (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
-  document.getElementById('label-top').textContent     = `IA — ${diffLabels[selectedDiff]}`;
+  const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+  lbl('avatar-bottom', myColor === 'w' ? '♙' : '♟');
+  lbl('avatar-top',    '🤖');
+  lbl('label-bottom',  `Você (${myColor === 'w' ? 'Brancas' : 'Pretas'})`);
+  lbl('label-top',     `IA — ${diffLabels[selectedDiff]}`);
 
-  buildBoard();
-  renderGame();
-  showScreen('game');
-  document.getElementById('btn-resign').classList.remove('hidden');
-  document.getElementById('btn-new-game').classList.add('hidden');
-  document.getElementById('btn-back-lobby').classList.add('hidden');
-  document.getElementById('spectator-bar').classList.add('hidden');
+  buildBoard(); renderGame(); showScreen('game');
+
+  const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
+  const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
+  show('btn-resign'); hide('btn-new-game'); hide('btn-back-lobby'); hide('spectator-bar');
 
   if (engine.turn === aiColor) scheduleAIMove();
 }
 
 function scheduleAIMove() {
   if (!gameActive || engine.turn !== aiColor) return;
-  aiThinking = true;
-  updateStatusBar();
+  aiThinking = true; updateStatusBar();
   const delay = selectedDiff === 'expert' ? 900 : 450;
   setTimeout(() => {
     if (!gameActive) return;
@@ -871,16 +815,11 @@ function scheduleAIMove() {
     aiThinking = false;
     if (move) {
       engine.makeMove(move.from, move.to, move.promoteTo || 'Q');
-      selectedSq = null; legalMovesCache = [];
-      renderGame();
+      selectedSq = null; legalMovesCache = []; renderGame();
       if (engine.status === 'checkmate') {
-        gameActive = false;
-        saveGame('loss');
-        showGameOver('Xeque-mate!', 'A IA venceu. Tente novamente!');
+        gameActive = false; saveGame('loss'); showGameOver('Xeque-mate!', 'A IA venceu. Tente novamente!');
       } else if (engine.status === 'stalemate') {
-        gameActive = false;
-        saveGame('draw');
-        showGameOver('Empate!', 'Afogamento.');
+        gameActive = false; saveGame('draw'); showGameOver('Empate!', 'Afogamento.');
       }
     }
   }, delay);
@@ -891,43 +830,36 @@ function scheduleAIMove() {
 ===================================================== */
 function buildBoard() {
   const boardEl = document.getElementById('chessboard');
+  if (!boardEl) return;
   boardEl.innerHTML = '';
 
   const files = myColor === 'w' ? ['a','b','c','d','e','f','g','h'] : ['h','g','f','e','d','c','b','a'];
   const ranks = myColor === 'w' ? ['8','7','6','5','4','3','2','1'] : ['1','2','3','4','5','6','7','8'];
 
   ['coords-file-top','coords-file-bottom'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
+    const el = document.getElementById(id); if (!el) return;
     el.innerHTML = '';
     files.forEach(f => {
       const s = document.createElement('span');
-      s.className = 'coord-label';
-      s.style.width = 'calc(var(--board-size) / 8)';
-      s.textContent = f;
-      el.appendChild(s);
+      s.className = 'coord-label'; s.style.width = 'calc(var(--board-size) / 8)';
+      s.textContent = f; el.appendChild(s);
     });
   });
 
   ['coords-rank-left','coords-rank-right'].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
+    const el = document.getElementById(id); if (!el) return;
     el.innerHTML = '';
     ranks.forEach(r => {
       const s = document.createElement('span');
-      s.className = 'coord-label';
-      s.style.height = 'calc(var(--board-size) / 8)';
-      s.textContent = r;
-      el.appendChild(s);
+      s.className = 'coord-label'; s.style.height = 'calc(var(--board-size) / 8)';
+      s.textContent = r; el.appendChild(s);
     });
   });
 
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       const sq = document.createElement('div');
-      sq.className = 'square';
-      sq.dataset.row = row;
-      sq.dataset.col = col;
+      sq.className = 'square'; sq.dataset.row = row; sq.dataset.col = col;
       if (!isSpectator) sq.addEventListener('click', onSquareClick);
       boardEl.appendChild(sq);
     }
@@ -945,9 +877,7 @@ function renderGame() {
     const vr = parseInt(sq.dataset.row);
     const vc = parseInt(sq.dataset.col);
     const [lr, lc] = viewToLogic(vr, vc);
-    const isLight = (vr + vc) % 2 === 0;
-
-    sq.className = 'square ' + (isLight ? 'light' : 'dark');
+    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
     sq.innerHTML = '';
 
     if (engine.lastMove) {
@@ -972,7 +902,6 @@ function renderGame() {
     const [svr, svc] = logicToView(slr, slc);
     const sel = document.querySelector(`#chessboard [data-row="${svr}"][data-col="${svc}"]`);
     if (sel) sel.classList.add('selected');
-
     legalMovesCache.forEach(m => {
       const [mvr, mvc] = logicToView(m.to[0], m.to[1]);
       const el = document.querySelector(`#chessboard [data-row="${mvr}"][data-col="${mvc}"]`);
@@ -980,10 +909,7 @@ function renderGame() {
     });
   }
 
-  updateStatusBar();
-  updateMoveHistory();
-  updateCaptured();
-  updateTurnCards();
+  updateStatusBar(); updateMoveHistory(); updateCaptured(); updateTurnCards();
 }
 
 /* =====================================================
@@ -1004,21 +930,16 @@ function onSquareClick(e) {
   if (selectedSq !== null) {
     const [slr, slc] = selectedSq;
     const move = legalMovesCache.find(m => m.to[0]===lr && m.to[1]===lc);
-
     if (move) {
       if (engine.board[slr][slc]?.type==='P' && (lr===0 || lr===7)) {
-        pendingPromotion = { from:[slr,slc], to:[lr,lc] };
-        showPromotion();
-        return;
+        pendingPromotion = { from:[slr,slc], to:[lr,lc] }; showPromotion(); return;
       }
-      doMove([slr,slc], [lr,lc]);
-      return;
+      doMove([slr,slc], [lr,lc]); return;
     }
     if (piece && piece.color === myColor) {
       selectedSq = [lr,lc]; legalMovesCache = engine.legalMoves(lr,lc); renderGame(); return;
     }
-    selectedSq = null; legalMovesCache = []; renderGame();
-    return;
+    selectedSq = null; legalMovesCache = []; renderGame(); return;
   }
 
   if (piece && piece.color === myColor) {
@@ -1030,10 +951,8 @@ function onSquareClick(e) {
    EXECUTAR MOVIMENTO
 ===================================================== */
 async function doMove(from, to, promoteTo = 'Q') {
-  const ok = engine.makeMove(from, to, promoteTo);
-  if (!ok) return;
-  selectedSq = null; legalMovesCache = [];
-  renderGame();
+  if (!engine.makeMove(from, to, promoteTo)) return;
+  selectedSq = null; legalMovesCache = []; renderGame();
 
   if (gameMode === 'multiplayer' && roomRef) {
     try { await roomRef.update({ state: engine.serialize() }); }
@@ -1043,18 +962,14 @@ async function doMove(from, to, promoteTo = 'Q') {
   if (engine.status === 'checkmate') {
     if (gameMode === 'multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:myColor }).catch(()=>{});
-    gameActive = false;
-    saveGame('win');
-    showGameOver('Xeque-mate! 🏆', 'Você venceu! Parabéns!');
-    return;
+    gameActive = false; saveGame('win');
+    showGameOver('Xeque-mate! 🏆', 'Você venceu! Parabéns!'); return;
   }
   if (engine.status === 'stalemate') {
     if (gameMode === 'multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:null }).catch(()=>{});
-    gameActive = false;
-    saveGame('draw');
-    showGameOver('Empate!', 'Afogamento — nenhum movimento legal.');
-    return;
+    gameActive = false; saveGame('draw');
+    showGameOver('Empate!', 'Afogamento — nenhum movimento legal.'); return;
   }
 
   if (gameMode === 'ai' && engine.turn === aiColor) scheduleAIMove();
@@ -1065,6 +980,7 @@ async function doMove(from, to, promoteTo = 'Q') {
 ===================================================== */
 function showPromotion() {
   const choices = document.getElementById('promotion-choices');
+  if (!choices) return;
   choices.innerHTML = '';
   ['Q','R','B','N'].forEach(type => {
     const btn = document.createElement('button');
@@ -1086,14 +1002,11 @@ function showPromotion() {
 ===================================================== */
 function updateStatusBar() {
   const bar = document.getElementById('status-bar');
+  if (!bar) return;
   bar.className = 'status-bar';
 
   if (isSpectator) { bar.textContent = `👁 Assistindo — ${engine.turn === 'w' ? 'Brancas' : 'Pretas'} jogam`; return; }
-
-  if (aiThinking) {
-    bar.innerHTML = 'IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>';
-    return;
-  }
+  if (aiThinking)  { bar.innerHTML = 'IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>'; return; }
 
   const isMyTurn = engine.turn === myColor;
   const msgs = {
@@ -1108,21 +1021,18 @@ function updateStatusBar() {
 }
 
 /* =====================================================
-   HISTÓRICO DE MOVIMENTOS
+   HISTÓRICO DE MOVIMENTOS (em jogo)
 ===================================================== */
 function updateMoveHistory() {
   const box = document.getElementById('move-history');
+  if (!box) return;
   box.innerHTML = '';
   for (let i = 0; i < engine.history.length; i += 2) {
     const row = document.createElement('div');
     row.className = 'move-row';
-    const num = document.createElement('span');
-    num.className = 'move-num';
-    num.textContent = (Math.floor(i/2)+1) + '.';
-    const w = document.createElement('span');
-    w.className = 'move-san'; w.textContent = engine.history[i] || '';
-    const b = document.createElement('span');
-    b.className = 'move-san'; b.textContent = engine.history[i+1] || '';
+    const num = document.createElement('span'); num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
+    const w = document.createElement('span'); w.className = 'move-san'; w.textContent = engine.history[i] || '';
+    const b = document.createElement('span'); b.className = 'move-san'; b.textContent = engine.history[i+1] || '';
     row.appendChild(num); row.appendChild(w); row.appendChild(b);
     box.appendChild(row);
   }
@@ -1134,13 +1044,10 @@ function updateMoveHistory() {
 ===================================================== */
 function updateCaptured() {
   const order = { Q:9, R:5, B:3, N:3, P:1 };
-
   const render = (capturedColor, elId) => {
-    const el = document.getElementById(elId);
-    if (!el) return;
+    const el = document.getElementById(elId); if (!el) return;
     const pieces = [...engine.captured[capturedColor]].sort((a,b)=>(order[b]||0)-(order[a]||0));
-    el.innerHTML = '';
-    if (!pieces.length) return;
+    el.innerHTML = ''; if (!pieces.length) return;
     const myScore  = pieces.reduce((s,t) => s+(order[t]||0), 0);
     const oppScore = engine.captured[capturedColor==='w'?'b':'w'].reduce((s,t)=>s+(order[t]||0),0);
     const adv = myScore - oppScore;
@@ -1156,7 +1063,6 @@ function updateCaptured() {
       el.appendChild(s);
     }
   };
-
   if (myColor === 'w') { render('b','captured-bottom'); render('w','captured-top'); }
   else                  { render('w','captured-bottom'); render('b','captured-top'); }
 }
@@ -1166,8 +1072,10 @@ function updateCaptured() {
 ===================================================== */
 function updateTurnCards() {
   const isMyTurn = engine.turn === myColor;
-  document.getElementById('card-bottom').classList.toggle('active-turn',  isMyTurn);
-  document.getElementById('card-top').classList.toggle('active-turn',    !isMyTurn);
+  const cb = document.getElementById('card-bottom');
+  const ct = document.getElementById('card-top');
+  if (cb) cb.classList.toggle('active-turn',  isMyTurn);
+  if (ct) ct.classList.toggle('active-turn', !isMyTurn);
 }
 
 /* =====================================================
@@ -1177,12 +1085,10 @@ async function resign() {
   if (!gameActive || isSpectator) return;
   if (!confirm('Tem certeza que deseja resignar?')) return;
   gameActive = false;
-
   if (gameMode === 'multiplayer' && roomRef) {
     const enemy = myColor === 'w' ? 'b' : 'w';
     await roomRef.update({ status:'resigned', winner:enemy, state:engine.serialize() }).catch(()=>{});
   }
-
   saveGame('resigned');
   showGameOver('Você resignou', gameMode==='ai' ? 'A IA venceu.' : 'O oponente venceu.');
 }
@@ -1191,16 +1097,15 @@ async function resign() {
    GAME OVER
 ===================================================== */
 function showGameOver(title, msg) {
-  document.getElementById('gameover-title').textContent = title;
-  document.getElementById('gameover-msg').textContent   = msg;
+  const t = document.getElementById('gameover-title');
+  const m = document.getElementById('gameover-msg');
+  const i = document.getElementById('gameover-icon');
+  if (t) t.textContent = title;
+  if (m) m.textContent = msg;
+  if (i) i.textContent = title.includes('🏆') ? '🏆' : title.includes('Empate') ? '🤝' : title.includes('resignou') ? '🏳' : '♟';
 
-  const icon = document.getElementById('gameover-icon');
-  icon.textContent = title.includes('🏆') ? '🏆'
-    : title.includes('Empate')  ? '🤝'
-    : title.includes('resignou') ? '🏳'
-    : '♟';
-
-  document.getElementById('btn-resign').classList.add('hidden');
-  document.getElementById('btn-new-game').classList.remove('hidden');
+  const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
+  const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
+  hide('btn-resign'); show('btn-new-game');
   setTimeout(() => showModal('modal-gameover'), 700);
 }
