@@ -78,40 +78,57 @@ window.addEventListener('DOMContentLoaded', () => {
   initReplayUI();
 
   fbAuth.onAuthStateChanged(user => {
-    currentUser = user;
-    if (user) {
-      myId = user.uid;
-      const name = user.displayName || user.email?.split('@')[0] || 'Jogador';
+  currentUser = user;
+  if (user) {
+    myId = user.uid;
+    const name     = user.displayName || user.email?.split('@')[0] || 'Jogador';
+    const photoURL = user.photoURL || null;
 
-      /* Nome no header */
-      const headerName = document.getElementById('header-username');
-      if (headerName) headerName.textContent = name;
+    /* Header — nome */
+    const headerName = document.getElementById('header-username');
+    if (headerName) headerName.textContent = name;
 
-      /* Avatar no header — foto se tiver, iniciais se não tiver */
-      const headerAvatar = document.getElementById('header-avatar');
-      if (headerAvatar) {
-        const photo = user.photoURL;
-        if (photo) {
-          headerAvatar.innerHTML = `<img src="${photo}" alt="${name}" class="header-photo" />`;
-        } else {
-          const initials = name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
-          headerAvatar.textContent = initials;
-          headerAvatar.classList.add('header-avatar-initials');
-        }
-      }
+    /* Header — foto ou iniciais */
+    const headerPhoto    = document.getElementById('header-photo');
+    const headerInitials = document.getElementById('header-initials');
 
-      db.ref('users/' + user.uid).update({
-        displayName: name,
-        email:       user.email || '',
-        photoURL:    user.photoURL || '',
-        lastSeen:    Date.now()
-      });
-
-      showScreen('lobby');
-    } else {
-      showScreen('auth');
+    if (photoURL && headerPhoto && headerInitials) {
+      headerPhoto.src = photoURL;
+      headerPhoto.classList.remove('hidden');
+      headerInitials.style.display = 'none';
+    } else if (headerInitials) {
+      headerInitials.style.display = 'flex';
+      /* Iniciais a partir do nome */
+      const initials = name
+        .split(' ')
+        .slice(0, 2)
+        .map(w => w[0]?.toUpperCase() || '')
+        .join('');
+      headerInitials.textContent = initials || '?';
     }
-  });
+
+    /* Salvar perfil no Firebase */
+    db.ref('users/' + user.uid).update({
+      displayName: name,
+      email:       user.email || '',
+      photoURL:    photoURL   || '',
+      lastSeen:    Date.now()
+    });
+
+    /* Guardar foto para usar nos cards de jogador */
+    window._myPhotoURL = photoURL;
+
+    showScreen('lobby');
+  } else {
+    /* Limpa avatar ao deslogar */
+    const headerPhoto    = document.getElementById('header-photo');
+    const headerInitials = document.getElementById('header-initials');
+    if (headerPhoto)    { headerPhoto.src = ''; headerPhoto.classList.add('hidden'); }
+    if (headerInitials) { headerInitials.style.display = 'flex'; headerInitials.textContent = '?'; }
+    window._myPhotoURL = null;
+    showScreen('auth');
+  }
+});
 });
 
 /* =====================================================
@@ -750,41 +767,85 @@ function copyRoomCode() {
 }
 
 /* =====================================================
+   HELPER — preenche card de jogador com foto ou símbolo
+===================================================== */
+function setPlayerCard(avatarId, labelId, label, photoURL, symbol) {
+  const avatarEl = document.getElementById(avatarId);
+  const labelEl  = document.getElementById(labelId);
+  if (labelEl) labelEl.textContent = label;
+  if (!avatarEl) return;
+  if (photoURL) {
+    avatarEl.innerHTML = `<img
+      src="${photoURL}"
+      alt="${label}"
+      style="width:100%;height:100%;object-fit:cover;border-radius:6px;"
+      onerror="this.parentElement.innerHTML='${symbol}'"
+    />`;
+  } else {
+    avatarEl.textContent = symbol;
+  }
+}
+
+/* =====================================================
    INICIAR MULTIPLAYER
 ===================================================== */
 function startMultiplayerGame(myName, oppName) {
-  gameMode = 'multiplayer'; gameActive = true; isSpectator = false;
-  selectedSq = null; legalMovesCache = [];
+  gameMode    = 'multiplayer';
+  gameActive  = true;
+  isSpectator = false;
+  selectedSq  = null;
+  legalMovesCache = [];
 
-  const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
-  lbl('avatar-bottom', myColor === 'w' ? '♙' : '♟');
-  lbl('avatar-top',    myColor === 'w' ? '♟' : '♙');
-  lbl('label-bottom',  `${myName} (${myColor === 'w' ? 'Brancas' : 'Pretas'})`);
-  lbl('label-top',     `${oppName} (${myColor === 'w' ? 'Pretas' : 'Brancas'})`);
+  const myPhoto = window._myPhotoURL || null;
+  const mySymbol  = myColor === 'w' ? '♙' : '♟';
+  const oppSymbol = myColor === 'w' ? '♟' : '♙';
+  const myLabel   = `${myName} (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
+  const oppLabel  = `${oppName} (${myColor === 'w' ? 'Pretas' : 'Brancas'})`;
 
-  buildBoard(); renderGame(); showScreen('game');
+  setPlayerCard('avatar-bottom', 'label-bottom', myLabel,  myPhoto, mySymbol);
+  setPlayerCard('avatar-top',    'label-top',    oppLabel, null,    oppSymbol);
+
+  buildBoard();
+  renderGame();
+  showScreen('game');
 
   const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
   const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
-  show('btn-resign'); hide('btn-new-game'); hide('btn-back-lobby'); hide('spectator-bar');
+  show('btn-resign');
+  hide('btn-new-game');
+  hide('btn-back-lobby');
+  hide('spectator-bar');
 
   roomRef.on('value', snap => {
-    const data = snap.val(); if (!data) return;
+    const data = snap.val();
+    if (!data) return;
 
     if (data.status === 'resigned' && data.winner !== myColor) {
-      engine.deserialize(data.state); renderGame(); gameActive = false;
-      saveGame('win'); showGameOver('Vitória! 🏆', 'O oponente resignou.'); return;
+      engine.deserialize(data.state);
+      renderGame();
+      gameActive = false;
+      saveGame('win');
+      showGameOver('Vitória! 🏆', 'O oponente resignou.');
+      return;
     }
+
     if (data.status === 'abandoned') {
-      gameActive = false; saveGame('win'); showGameOver('Vitória! 🏆', 'O oponente abandonou.'); return;
+      gameActive = false;
+      saveGame('win');
+      showGameOver('Vitória! 🏆', 'O oponente abandonou.');
+      return;
     }
+
     if (data.state && data.state.turn === myColor) {
-      engine.deserialize(data.state); renderGame();
+      engine.deserialize(data.state);
+      renderGame();
       if (engine.status === 'checkmate') {
-        gameActive = false; saveGame('loss');
+        gameActive = false;
+        saveGame('loss');
         showGameOver('Xeque-mate!', 'Você perdeu. Tente novamente!');
       } else if (engine.status === 'stalemate') {
-        gameActive = false; saveGame('draw');
+        gameActive = false;
+        saveGame('draw');
         showGameOver('Empate!', 'Afogamento.');
       }
     }
@@ -796,28 +857,45 @@ function startMultiplayerGame(myName, oppName) {
 ===================================================== */
 function startAIGame() {
   gameMode = 'ai';
+
   let playerColor = selectedPlayerColor;
   if (playerColor === 'random') playerColor = Math.random() < 0.5 ? 'w' : 'b';
-  myColor = playerColor; aiColor = playerColor === 'w' ? 'b' : 'w';
+  myColor = playerColor;
+  aiColor = playerColor === 'w' ? 'b' : 'w';
 
   ai.setDifficulty(selectedDiff);
   engine.reset();
-  gameActive = true; isSpectator = false;
-  selectedSq = null; legalMovesCache = [];
+  gameActive  = true;
+  isSpectator = false;
+  selectedSq  = null;
+  legalMovesCache = [];
   opponentNameGlobal = `IA (${selectedDiff})`;
 
-  const diffLabels = { iniciante:'Iniciante', intermediario:'Intermediário', avancado:'Avançado', expert:'Expert' };
-  const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
-  lbl('avatar-bottom', myColor === 'w' ? '♙' : '♟');
-  lbl('avatar-top',    '🤖');
-  lbl('label-bottom',  `Você (${myColor === 'w' ? 'Brancas' : 'Pretas'})`);
-  lbl('label-top',     `IA — ${diffLabels[selectedDiff]}`);
+  const diffLabels = {
+    iniciante:     'Iniciante',
+    intermediario: 'Intermediário',
+    avancado:      'Avançado',
+    expert:        'Expert'
+  };
 
-  buildBoard(); renderGame(); showScreen('game');
+  const myPhoto  = window._myPhotoURL || null;
+  const mySymbol = myColor === 'w' ? '♙' : '♟';
+  const myLabel  = `Você (${myColor === 'w' ? 'Brancas' : 'Pretas'})`;
+  const aiLabel  = `IA — ${diffLabels[selectedDiff]}`;
+
+  setPlayerCard('avatar-bottom', 'label-bottom', myLabel, myPhoto, mySymbol);
+  setPlayerCard('avatar-top',    'label-top',    aiLabel, null,    '🤖');
+
+  buildBoard();
+  renderGame();
+  showScreen('game');
 
   const show = id => { const e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
   const hide = id => { const e = document.getElementById(id); if (e) e.classList.add('hidden'); };
-  show('btn-resign'); hide('btn-new-game'); hide('btn-back-lobby'); hide('spectator-bar');
+  show('btn-resign');
+  hide('btn-new-game');
+  hide('btn-back-lobby');
+  hide('spectator-bar');
 
   if (engine.turn === aiColor) scheduleAIMove();
 }

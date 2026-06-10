@@ -962,8 +962,29 @@ body {
   margin-top: 12px;
 }
 
-/* ===== AVATAR DO HEADER ===== */
-.header-avatar {
+/* ===== FOTO DE PERFIL NO HEADER ===== */
+.header-avatar-wrap {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.header-photo {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255,255,255,0.15);
+  display: block;
+  transition: border-color 0.2s;
+}
+
+.header-photo:hover {
+  border-color: var(--accent);
+}
+
+.header-initials {
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -972,27 +993,37 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.header-photo.hidden {
+  display: none !important;
+}
+
+/* Cards de jogador com foto */
+.player-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+/* Tela de auth — avatar preview */
+.auth-avatar-preview {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  margin: 0 auto;
   overflow: hidden;
-  flex-shrink: 0;
-  transition: border-color 0.2s;
+  border: 3px solid var(--accent);
+  display: none;
 }
 
-.header-avatar:hover {
-  border-color: var(--accent);
-}
-
-.header-photo {
+.auth-avatar-preview img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 50%;
-}
-
-.header-avatar-initials {
-  background: linear-gradient(135deg, var(--accent), var(--surface2));
-  font-size: 13px;
-  letter-spacing: 0.5px;
 }
