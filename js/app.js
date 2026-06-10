@@ -50,7 +50,7 @@ let replayGameData = null;
    HELPER
 ===================================================== */
 function el(id, event, handler) {
-  const element = document.getElementById(id);
+  var element = document.getElementById(id);
   if (element) element.addEventListener(event, handler);
   else console.warn('#' + id + ' nao encontrado');
 }
@@ -431,41 +431,41 @@ async function loadReplay(gameId) {
 }
 
 /* =====================================================
-   REPLAY — parser SAN direto (definitivo)
-   Não gera contra-SANs. Decodifica o texto diretamente.
+   REPLAY — parser SAN direto (sem regex destrutivo)
+   Decodifica o texto SAN sem gerar contra-SANs
 ===================================================== */
 function applyMoveBySAN(eng, san) {
   if (!san || !san.trim()) return false;
-  const color = eng.turn;
-  const s = san.replace(/[+#!?\s]/g, ''); // remove apenas anotações
+  var color = eng.turn;
+
+  /* Remove apenas anotações, preserva letras de peças e coordenadas */
+  var s = san.replace(/[+#!?\s]/g, '');
 
   /* ── Roque ── */
   if (s === 'O-O-O' || s === '0-0-0') {
-    const row = color === 'w' ? 7 : 0;
-    return eng.makeMove([row, 4], [row, 2], 'Q');
+    var rowQ = color === 'w' ? 7 : 0;
+    return eng.makeMove([rowQ, 4], [rowQ, 2], 'Q');
   }
   if (s === 'O-O' || s === '0-0') {
-    const row = color === 'w' ? 7 : 0;
-    return eng.makeMove([row, 4], [row, 6], 'Q');
+    var rowK = color === 'w' ? 7 : 0;
+    return eng.makeMove([rowK, 4], [rowK, 6], 'Q');
   }
 
-  const FILES = 'abcdefgh';
-  const RANKS = '87654321'; // row 0 = rank 8, row 7 = rank 1
+  var FILES = 'abcdefgh';
+  var RANKS = '87654321'; /* row 0 = rank 8, row 7 = rank 1 */
 
   /* ── Promoção ── ex: b8=Q, exd8=R */
-  let promoType = 'Q';
-  let work = s;
-  const promoMatch = work.match(/=([QRBN])
-$
-/);
+  var promoType = 'Q';
+  var work = s;
+  var promoMatch = work.match(/=([QRBN])$/);
   if (promoMatch) {
     promoType = promoMatch[1];
-    work = work.slice(0, -2); // remove =Q
+    work = work.slice(0, -2);
   }
 
-  /* ── Peça ── */
-  let pieceType = 'P';
-  if ('KQRBN'.includes(work[0])) {
+  /* ── Tipo de peça ── */
+  var pieceType = 'P';
+  if ('KQRBN'.indexOf(work[0]) !== -1) {
     pieceType = work[0];
     work = work.slice(1);
   }
@@ -473,55 +473,55 @@ $
   /* ── Remove 'x' de captura ── */
   work = work.replace('x', '');
 
-  /* ── Destino: últimas 2 chars ── ex: "e6", "h6", "a7" */
+  /* ── Destino: últimas 2 chars ── */
   if (work.length < 2) return false;
-  const destStr  = work.slice(-2);
-  const destFile = FILES.indexOf(destStr[0]);
-  const destRank = RANKS.indexOf(destStr[1]);
+  var destStr  = work.slice(-2);
+  var destFile = FILES.indexOf(destStr[0]);
+  var destRank = RANKS.indexOf(destStr[1]);
   if (destFile === -1 || destRank === -1) return false;
-  const toRow = destRank;
-  const toCol = destFile;
+  var toRow = destRank;
+  var toCol = destFile;
   work = work.slice(0, -2);
 
-  /* ── Desambiguação: o que sobrou em `work` é file e/ou rank da origem */
-  let disambigFile = -1;
-  let disambigRank = -1;
-  for (const ch of work) {
-    const fi = FILES.indexOf(ch);
-    const ri = RANKS.indexOf(ch);
+  /* ── Desambiguação: o que sobrou é file e/ou rank da origem ── */
+  var disambigFile = -1;
+  var disambigRank = -1;
+  for (var i = 0; i < work.length; i++) {
+    var ch = work[i];
+    var fi = FILES.indexOf(ch);
+    var ri = RANKS.indexOf(ch);
     if (fi !== -1) disambigFile = fi;
     else if (ri !== -1) disambigRank = ri;
   }
 
-  /* ── Busca a peça que pode mover para o destino ── */
-  const candidates = [];
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const p = eng.board[r]?.[c];
+  /* ── Busca candidatos ── */
+  var candidates = [];
+  for (var r = 0; r < 8; r++) {
+    for (var c = 0; c < 8; c++) {
+      var p = eng.board[r] && eng.board[r][c];
       if (!p || p.color !== color || p.type !== pieceType) continue;
       if (disambigFile !== -1 && c !== disambigFile) continue;
       if (disambigRank !== -1 && r !== disambigRank) continue;
-      const legal = eng.legalMoves(r, c);
-      if (legal.some(m => m.to[0] === toRow && m.to[1] === toCol)) {
+      var legal = eng.legalMoves(r, c);
+      if (legal.some(function(m) { return m.to[0] === toRow && m.to[1] === toCol; })) {
         candidates.push([r, c]);
       }
     }
   }
 
   if (candidates.length === 0) {
-    console.warn(`applyMoveBySAN: nenhum candidato para "${san}" (${color})`);
+    console.warn('applyMoveBySAN: nenhum candidato para "' + san + '" (' + color + ')');
     return false;
   }
   if (candidates.length > 1) {
-    console.warn(`applyMoveBySAN: ambíguo "${san}" — ${candidates.length} candidatos, usando o primeiro`);
+    console.warn('applyMoveBySAN: ambiguo "' + san + '" — ' + candidates.length + ' candidatos');
   }
 
-  const [fr, fc] = candidates[0];
-  return eng.makeMove([fr, fc], [toRow, toCol], promoType);
+  return eng.makeMove([candidates[0][0], candidates[0][1]], [toRow, toCol], promoType);
 }
 
 /* =====================================================
-   REPLAY — aplica lances até idx
+   REPLAY — aplica lances ate idx
 ===================================================== */
 function _replayApplyTo(idx) {
   idx          = Math.max(0, Math.min(replayMoves.length, idx));
@@ -531,7 +531,7 @@ function _replayApplyTo(idx) {
   for (var i = 0; i < idx; i++) {
     var san = replayMoves[i];
     if (!applyMoveBySAN(replayEngine, san)) {
-      console.warn('Lance ' + (i+1) + ' falhou: "' + san + '"');
+      console.warn('Lance ' + (i + 1) + ' falhou: "' + san + '"');
     }
   }
 
@@ -551,7 +551,7 @@ function replayGoTo(idx) {
 }
 
 /* =====================================================
-   REPLAY — Play automático com contador local
+   REPLAY — Play automatico com contador local
 ===================================================== */
 function toggleReplayAuto() {
   if (replayInterval) { stopReplayAuto(); return; }
@@ -573,7 +573,7 @@ function stopReplayAuto() {
 }
 
 /* =====================================================
-   REPLAY — contador e histórico
+   REPLAY — contador e historico visual
 ===================================================== */
 function updateReplayCounter() {
   var e = document.getElementById('replay-move-counter');
@@ -588,23 +588,23 @@ function renderReplayHistory() {
     var row = document.createElement('div');
     row.className = 'move-row';
     var num = document.createElement('span');
-    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
+    num.className = 'move-num'; num.textContent = (Math.floor(i / 2) + 1) + '.';
     var w = document.createElement('span');
-    w.className = 'move-san' + (replayTarget === i+1 ? ' move-active' : '');
+    w.className = 'move-san' + (replayTarget === i + 1 ? ' move-active' : '');
     w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
-    (function(idx) { w.addEventListener('click', function() { replayGoTo(idx); }); })(i+1);
+    (function(idx) { w.addEventListener('click', function() { replayGoTo(idx); }); })(i + 1);
     var b = document.createElement('span');
-    b.className = 'move-san' + (replayTarget === i+2 ? ' move-active' : '');
-    b.textContent = replayMoves[i+1] || '';
-    if (replayMoves[i+1]) {
+    b.className = 'move-san' + (replayTarget === i + 2 ? ' move-active' : '');
+    b.textContent = replayMoves[i + 1] || '';
+    if (replayMoves[i + 1]) {
       b.style.cursor = 'pointer';
-      (function(idx) { b.addEventListener('click', function() { replayGoTo(idx); }); })(i+2);
+      (function(idx) { b.addEventListener('click', function() { replayGoTo(idx); }); })(i + 2);
     }
     row.appendChild(num); row.appendChild(w); row.appendChild(b);
     box.appendChild(row);
   }
   var active = box.querySelector('.move-active');
-  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
+  if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 /* =====================================================
@@ -635,7 +635,7 @@ function replayRenderBoard() {
     if (replayEngine.lastMove) {
       var fr = replayEngine.lastMove.from[0], fc = replayEngine.lastMove.from[1];
       var tr = replayEngine.lastMove.to[0],   tc = replayEngine.lastMove.to[1];
-      if ((vr===fr && vc===fc)||(vr===tr && vc===tc)) sq.classList.add('last-move');
+      if ((vr === fr && vc === fc) || (vr === tr && vc === tc)) sq.classList.add('last-move');
     }
     var piece = replayEngine.piece(vr, vc);
     if (piece) {
@@ -794,10 +794,10 @@ function startMultiplayerGame(myName, oppName) {
   var myPhoto   = window._myPhotoURL || null;
   var mySymbol  = myColor === 'w' ? '♙' : '♟';
   var oppSymbol = myColor === 'w' ? '♟' : '♙';
-  setPlayerCard('avatar-bottom','label-bottom',
-    myName  + ' (' + (myColor==='w'?'Brancas':'Pretas') + ')', myPhoto, mySymbol);
-  setPlayerCard('avatar-top','label-top',
-    oppName + ' (' + (myColor==='w'?'Pretas':'Brancas') + ')', null, oppSymbol);
+  setPlayerCard('avatar-bottom', 'label-bottom',
+    myName  + ' (' + (myColor === 'w' ? 'Brancas' : 'Pretas') + ')', myPhoto, mySymbol);
+  setPlayerCard('avatar-top', 'label-top',
+    oppName + ' (' + (myColor === 'w' ? 'Pretas' : 'Brancas') + ')', null, oppSymbol);
   buildBoard(); renderGame(); showScreen('game');
   var show = function(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
   var hide = function(id) { var e = document.getElementById(id); if (e) e.classList.add('hidden'); };
@@ -838,9 +838,9 @@ function startAIGame() {
   var diffLabels = { iniciante:'Iniciante', intermediario:'Intermediario', avancado:'Avancado', expert:'Expert' };
   var myPhoto  = window._myPhotoURL || null;
   var mySymbol = myColor === 'w' ? '♙' : '♟';
-  setPlayerCard('avatar-bottom','label-bottom',
-    'Voce (' + (myColor==='w'?'Brancas':'Pretas') + ')', myPhoto, mySymbol);
-  setPlayerCard('avatar-top','label-top',
+  setPlayerCard('avatar-bottom', 'label-bottom',
+    'Voce (' + (myColor === 'w' ? 'Brancas' : 'Pretas') + ')', myPhoto, mySymbol);
+  setPlayerCard('avatar-top', 'label-top',
     'IA — ' + (diffLabels[selectedDiff] || selectedDiff), null, '🤖');
   buildBoard(); renderGame(); showScreen('game');
   var show = function(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
@@ -922,25 +922,25 @@ function renderGame() {
     if (engine.lastMove) {
       var fv = logicToView(engine.lastMove.from[0], engine.lastMove.from[1]);
       var tv = logicToView(engine.lastMove.to[0],   engine.lastMove.to[1]);
-      if ((vr===fv[0] && vc===fv[1])||(vr===tv[0] && vc===tv[1])) sq.classList.add('last-move');
+      if ((vr === fv[0] && vc === fv[1]) || (vr === tv[0] && vc === tv[1])) sq.classList.add('last-move');
     }
     var piece = engine.piece(lc[0], lc[1]);
     if (piece) {
       var span = document.createElement('span');
-      span.className = 'piece ' + (piece.color==='w' ? 'piece-white' : 'piece-black');
+      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
       span.textContent = SYMBOLS[piece.color + piece.type] || '?';
       sq.appendChild(span);
-      if (piece.type==='K' && piece.color===engine.turn && engine.status==='check')
+      if (piece.type === 'K' && piece.color === engine.turn && engine.status === 'check')
         sq.classList.add('in-check');
     }
   });
   if (selectedSq !== null) {
     var sv = logicToView(selectedSq[0], selectedSq[1]);
-    var sel = document.querySelector('#chessboard [data-row="'+sv[0]+'"][data-col="'+sv[1]+'"]');
+    var sel = document.querySelector('#chessboard [data-row="' + sv[0] + '"][data-col="' + sv[1] + '"]');
     if (sel) sel.classList.add('selected');
     legalMovesCache.forEach(function(m) {
       var mv = logicToView(m.to[0], m.to[1]);
-      var el = document.querySelector('#chessboard [data-row="'+mv[0]+'"][data-col="'+mv[1]+'"]');
+      var el = document.querySelector('#chessboard [data-row="' + mv[0] + '"][data-col="' + mv[1] + '"]');
       if (el) el.classList.add(engine.piece(m.to[0], m.to[1]) || m.enPassant ? 'capture-hint' : 'move-hint');
     });
   }
@@ -962,20 +962,20 @@ function onSquareClick(e) {
   var piece = engine.piece(lr, lcol);
   if (selectedSq !== null) {
     var slr = selectedSq[0], slc = selectedSq[1];
-    var move = legalMovesCache.find(function(m) { return m.to[0]===lr && m.to[1]===lcol; });
+    var move = legalMovesCache.find(function(m) { return m.to[0] === lr && m.to[1] === lcol; });
     if (move) {
-      if (engine.board[slr][slc] && engine.board[slr][slc].type==='P' && (lr===0||lr===7)) {
+      if (engine.board[slr][slc] && engine.board[slr][slc].type === 'P' && (lr === 0 || lr === 7)) {
         pendingPromotion = { from:[slr,slc], to:[lr,lcol] }; showPromotion(); return;
       }
-      doMove([slr,slc],[lr,lcol]); return;
+      doMove([slr, slc], [lr, lcol]); return;
     }
-    if (piece && piece.color===myColor) {
-      selectedSq=[lr,lcol]; legalMovesCache=engine.legalMoves(lr,lcol); renderGame(); return;
+    if (piece && piece.color === myColor) {
+      selectedSq = [lr, lcol]; legalMovesCache = engine.legalMoves(lr, lcol); renderGame(); return;
     }
-    selectedSq=null; legalMovesCache=[]; renderGame(); return;
+    selectedSq = null; legalMovesCache = []; renderGame(); return;
   }
-  if (piece && piece.color===myColor) {
-    selectedSq=[lr,lcol]; legalMovesCache=engine.legalMoves(lr,lcol); renderGame();
+  if (piece && piece.color === myColor) {
+    selectedSq = [lr, lcol]; legalMovesCache = engine.legalMoves(lr, lcol); renderGame();
   }
 }
 
@@ -986,23 +986,23 @@ async function doMove(from, to, promoteTo) {
   promoteTo = promoteTo || 'Q';
   if (!engine.makeMove(from, to, promoteTo)) return;
   selectedSq = null; legalMovesCache = []; renderGame();
-  if (gameMode==='multiplayer' && roomRef) {
+  if (gameMode === 'multiplayer' && roomRef) {
     try { await roomRef.update({ state: engine.serialize() }); }
     catch (e) { console.error('Erro ao salvar movimento:', e); }
   }
-  if (engine.status==='checkmate') {
-    if (gameMode==='multiplayer' && roomRef)
+  if (engine.status === 'checkmate') {
+    if (gameMode === 'multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:myColor }).catch(function(){});
-    gameActive=false; saveGame('win');
-    showGameOver('Xeque-mate! 🏆','Voce venceu! Parabens!'); return;
+    gameActive = false; saveGame('win');
+    showGameOver('Xeque-mate! 🏆', 'Voce venceu! Parabens!'); return;
   }
-  if (engine.status==='stalemate') {
-    if (gameMode==='multiplayer' && roomRef)
+  if (engine.status === 'stalemate') {
+    if (gameMode === 'multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:null }).catch(function(){});
-    gameActive=false; saveGame('draw');
-    showGameOver('Empate!','Afogamento — nenhum movimento legal.'); return;
+    gameActive = false; saveGame('draw');
+    showGameOver('Empate!', 'Afogamento — nenhum movimento legal.'); return;
   }
-  if (gameMode==='ai' && engine.turn===aiColor) scheduleAIMove();
+  if (gameMode === 'ai' && engine.turn === aiColor) scheduleAIMove();
 }
 
 /* =====================================================
@@ -1034,18 +1034,18 @@ function updateStatusBar() {
   var bar = document.getElementById('status-bar');
   if (!bar) return;
   bar.className = 'status-bar';
-  if (isSpectator) { bar.textContent = '👁 Assistindo — ' + (engine.turn==='w'?'Brancas':'Pretas') + ' jogam'; return; }
+  if (isSpectator) { bar.textContent = '👁 Assistindo — ' + (engine.turn === 'w' ? 'Brancas' : 'Pretas') + ' jogam'; return; }
   if (aiThinking)  { bar.innerHTML = 'IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>'; return; }
   var isMyTurn = engine.turn === myColor;
   var msgs = {
-    playing:   isMyTurn ? 'Sua vez' : (gameMode==='ai' ? 'IA pensando...' : 'Vez do oponente'),
+    playing:   isMyTurn ? 'Sua vez' : (gameMode === 'ai' ? 'IA pensando...' : 'Vez do oponente'),
     check:     isMyTurn ? '⚠ Xeque! Defenda seu rei' : 'Oponente esta em xeque',
     checkmate: 'Xeque-mate!',
     stalemate: 'Afogamento!'
   };
   bar.textContent = msgs[engine.status] || '';
-  if (engine.status==='check'   && isMyTurn) bar.classList.add('check');
-  if (engine.status==='playing' && isMyTurn) bar.classList.add('your-turn');
+  if (engine.status === 'check'   && isMyTurn) bar.classList.add('check');
+  if (engine.status === 'playing' && isMyTurn) bar.classList.add('your-turn');
 }
 
 /* =====================================================
@@ -1080,7 +1080,7 @@ function updateCaptured() {
     var adv = myScore - oppScore;
     pieces.forEach(function(type) {
       var span = document.createElement('span');
-      span.className = 'cap-piece ' + (capturedColor==='w'?'cap-black':'cap-white');
+      span.className = 'cap-piece ' + (capturedColor === 'w' ? 'cap-black' : 'cap-white');
       span.textContent = SYMBOLS[capturedColor + type];
       el.appendChild(span);
     });
@@ -1090,8 +1090,8 @@ function updateCaptured() {
       el.appendChild(s);
     }
   }
-  if (myColor==='w') { render('b','captured-bottom'); render('w','captured-top'); }
-  else                { render('w','captured-bottom'); render('b','captured-top'); }
+  if (myColor === 'w') { render('b','captured-bottom'); render('w','captured-top'); }
+  else                  { render('w','captured-bottom'); render('b','captured-top'); }
 }
 
 /* =====================================================
@@ -1112,12 +1112,12 @@ async function resign() {
   if (!gameActive || isSpectator) return;
   if (!confirm('Tem certeza que deseja resignar?')) return;
   gameActive = false;
-  if (gameMode==='multiplayer' && roomRef) {
-    var enemy = myColor==='w' ? 'b' : 'w';
+  if (gameMode === 'multiplayer' && roomRef) {
+    var enemy = myColor === 'w' ? 'b' : 'w';
     await roomRef.update({ status:'resigned', winner:enemy, state:engine.serialize() }).catch(function(){});
   }
   saveGame('resigned');
-  showGameOver('Voce resignou', gameMode==='ai' ? 'A IA venceu.' : 'O oponente venceu.');
+  showGameOver('Voce resignou', gameMode === 'ai' ? 'A IA venceu.' : 'O oponente venceu.');
 }
 
 /* =====================================================
