@@ -535,3 +535,173 @@ body {
   :root { --board-size: 98vw; }
   .player-card { padding: 8px 10px; }
 }
+
+/* ===== MODO SELECTOR ===== */
+.mode-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.mode-btn {
+  background: rgba(255,255,255,0.04);
+  border: 2px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 16px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+  color: var(--text);
+}
+
+.mode-btn:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.18);
+}
+
+.mode-btn.active {
+  background: rgba(233,69,96,0.12);
+  border-color: var(--accent);
+}
+
+.mode-icon  { font-size: 26px; }
+.mode-label { font-size: 14px; font-weight: 700; }
+.mode-desc  { font-size: 11px; color: var(--text-muted); text-align: center; }
+
+/* ===== PAINÉIS DE MODO ===== */
+.mode-panel { display: flex; flex-direction: column; gap: 14px; }
+.mode-panel.hidden { display: none; }
+.btn-full { width: 100%; justify-content: center; text-align: center; }
+
+/* ===== OPÇÕES DA IA ===== */
+.ai-options {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.option-group { display: flex; flex-direction: column; gap: 10px; }
+
+.option-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
+/* Seletor de cor */
+.color-selector {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.color-btn {
+  background: rgba(255,255,255,0.05);
+  border: 2px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 10px 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.color-btn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
+.color-btn.active { background: rgba(233,69,96,0.15); border-color: var(--accent); color: var(--text); }
+
+/* Seletor de dificuldade */
+.difficulty-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.diff-btn {
+  background: rgba(255,255,255,0.04);
+  border: 2px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 12px 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+  color: var(--text);
+}
+
+.diff-btn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18); }
+
+.diff-btn.active {
+  background: rgba(233,69,96,0.15);
+  border-color: var(--accent);
+}
+
+.diff-btn[data-level="iniciante"].active     { background: rgba(74,222,128,0.12);  border-color: #4ade80; }
+.diff-btn[data-level="intermediario"].active { background: rgba(250,204,21,0.12);  border-color: #facc15; }
+.diff-btn[data-level="avancado"].active      { background: rgba(251,146,60,0.12);  border-color: #fb923c; }
+.diff-btn[data-level="expert"].active        { background: rgba(233,69,96,0.15);   border-color: var(--accent); }
+
+.diff-name  { font-size: 11px; font-weight: 700; }
+.diff-desc  { font-size: 10px; color: var(--text-muted); text-align: center; }
+.diff-stars { font-size: 12px; color: var(--accent2); letter-spacing: 1px; }
+
+/* Badge de IA na status bar */
+.ai-badge {
+  display: inline-block;
+  background: rgba(233,69,96,0.2);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* Thinking indicator */
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.thinking-dots span {
+  display: inline-block;
+  width: 5px; height: 5px;
+  background: var(--accent2);
+  border-radius: 50%;
+  animation: bounce 1.2s ease-in-out infinite;
+}
+
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%            { transform: scale(1);   opacity: 1;   }
+}
+
+.gameover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+/* ===== RESPONSIVE LOBBY ===== */
+@media (max-width: 500px) {
+  .difficulty-selector { grid-template-columns: repeat(2, 1fr); }
+  .lobby-container { padding: 32px 20px; }
+}
