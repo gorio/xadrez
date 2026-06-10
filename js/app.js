@@ -360,10 +360,10 @@ async function openHistory() {
       var card = document.createElement('div');
       card.className = 'history-card';
       var resClassMap = { win:'result-win', loss:'result-loss', draw:'result-draw', resigned:'result-loss' };
-      var resTextMap  = { win:'Vitoria ✓', loss:'Derrota ✗', draw:'Empate =', resigned:'Resignou' };
+      var resTextMap  = { win:'Vitória ✓', loss:'Derrota ✗', draw:'Empate =', resigned:'Resignou' };
       var resClass = resClassMap[game.result] || '';
       var resText  = resTextMap[game.result]  || game.result;
-      var modeText = game.mode === 'ai' ? ('IA (' + (game.difficulty || '') + ')') : 'Multiplayer';
+      var modeText = game.mode === 'ai' ? ('🤖 IA (' + (game.difficulty || '') + ')') : '👥 Multiplayer';
       var date = new Date(game.playedAt).toLocaleDateString('pt-BR', {
         day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'
       });
@@ -378,7 +378,7 @@ async function openHistory() {
         '</div>' +
         '<div class="history-card-right">' +
           '<span class="history-date">' + date + '</span>' +
-          '<button class="btn btn-small btn-secondary">Replay</button>' +
+          '<button class="btn btn-small btn-secondary">▶ Replay</button>' +
         '</div>';
       card.querySelector('button').addEventListener('click', function() { loadReplay(game.id); });
       if (listEl) listEl.appendChild(card);
@@ -390,7 +390,7 @@ async function openHistory() {
 }
 
 /* =====================================================
-   REPLAY — carregar partida
+   REPLAY — carrega partida
 ===================================================== */
 async function loadReplay(gameId) {
   showScreen('replay');
@@ -400,7 +400,7 @@ async function loadReplay(gameId) {
     if (!replayGameData) { alert('Partida nao encontrada.'); openHistory(); return; }
 
     var isWhite = replayGameData.myColor === 'w';
-    function lbl(id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; }
+    var lbl = function(id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; };
     lbl('replay-label-bottom', isWhite
       ? replayGameData.playerName + ' (Brancas)'
       : replayGameData.playerName + ' (Pretas)');
@@ -422,51 +422,131 @@ async function loadReplay(gameId) {
     renderReplayHistory();
     updateReplayCounter();
 
-    var resultMap = { win:'Vitoria', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
+    var resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
     lbl('replay-status',
-      'Replay — ' + (resultMap[replayGameData.result] || '') +
-      ' — ' + replayMoves.length + ' lances');
+      'Replay — ' + (resultMap[replayGameData.result] || '') + ' — ' + replayMoves.length + ' lances');
   } catch (e) {
     console.error(e); alert('Erro ao carregar replay.'); openHistory();
   }
 }
 
 /* =====================================================
-   REPLAY — navegacao manual (para o auto-play)
+   REPLAY — parser direto de SAN (sem gerar contra-SANs)
+   Decodifica o texto e encontra o lance legal correspondente
 ===================================================== */
-function replayGoTo(idx) {
-  stopReplayAuto();
-  _replayApplyTo(idx);
+function applyMoveBySAN(eng, san) {
+  if (!san) return false;
+  var color = eng.turn;
+  var FILES = 'abcdefgh';
+  var RANKS = '87654321';
+
+  /* Remove anotações */
+  var s = san.replace(/[+#!?]/g, '').trim();
+
+  /* Roque */
+  if (s === 'O-O-O' || s === '0-0-0') {
+    for (var r0 = 0; r0 < 8; r0++) {
+      for (var c0 = 0; c0 < 8; c0++) {
+        var p0 = eng.board[r0] && eng.board[r0][c0];
+        if (!p0 || p0.type !== 'K' || p0.color !== color) continue;
+        var moves0 = eng.legalMoves(r0, c0);
+        for (var mi0 = 0; mi0 < moves0.length; mi0++) {
+          if (moves0[mi0].castle === 'Q') {
+            return eng.makeMove([r0, c0], moves0[mi0].to, 'Q');
+          }
+        }
+      }
+    }
+    return false;
+  }
+  if (s === 'O-O' || s === '0-0') {
+    for (var r1 = 0; r1 < 8; r1++) {
+      for (var c1 = 0; c1 < 8; c1++) {
+        var p1 = eng.board[r1] && eng.board[r1][c1];
+        if (!p1 || p1.type !== 'K' || p1.color !== color) continue;
+        var moves1 = eng.legalMoves(r1, c1);
+        for (var mi1 = 0; mi1 < moves1.length; mi1++) {
+          if (moves1[mi1].castle === 'K') {
+            return eng.makeMove([r1, c1], moves1[mi1].to, 'Q');
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /* Extrai peça */
+  var pieceTypes = 'KQRBN';
+  var pieceType = 'P';
+  var rest = s;
+  if (rest.length > 0 && pieceTypes.indexOf(rest[0]) !== -1) {
+    pieceType = rest[0];
+    rest = rest.slice(1);
+  }
+
+  /* Extrai promoção */
+  var promoType = 'Q';
+  var promoMatch = rest.match(/=([QRBN])/);
+  if (promoMatch) {
+    promoType = promoMatch[1];
+    rest = rest.replace(/=[QRBN]/, '');
+  }
+
+  /* Remove captura */
+  rest = rest.replace('x', '');
+
+  /* Extrai destino — últimas 2 chars */
+  if (rest.length < 2) return false;
+  var destStr = rest.slice(-2);
+  rest = rest.slice(0, rest.length - 2);
+
+  var destFile = FILES.indexOf(destStr[0]);
+  var destRank = RANKS.indexOf(destStr[1]);
+  if (destFile === -1 || destRank === -1) return false;
+
+  /* Desambiguação opcional */
+  var disambigFile = -1;
+  var disambigRank = -1;
+  if (rest.length > 0) {
+    var df = FILES.indexOf(rest[0]);
+    var dr = RANKS.indexOf(rest[0]);
+    if (df !== -1) { disambigFile = df; rest = rest.slice(1); }
+    else if (dr !== -1) { disambigRank = dr; rest = rest.slice(1); }
+  }
+  if (rest.length > 0) {
+    var df2 = FILES.indexOf(rest[0]);
+    var dr2 = RANKS.indexOf(rest[0]);
+    if (df2 !== -1) disambigFile = df2;
+    else if (dr2 !== -1) disambigRank = dr2;
+  }
+
+  /* Busca peças candidatas */
+  var candidates = [];
+  for (var r = 0; r < 8; r++) {
+    for (var c = 0; c < 8; c++) {
+      var p = eng.board[r] && eng.board[r][c];
+      if (!p || p.color !== color || p.type !== pieceType) continue;
+      if (disambigFile !== -1 && c !== disambigFile) continue;
+      if (disambigRank !== -1 && r !== disambigRank) continue;
+      var legalList = eng.legalMoves(r, c);
+      for (var li = 0; li < legalList.length; li++) {
+        if (legalList[li].to[0] === destRank && legalList[li].to[1] === destFile) {
+          candidates.push({ from: [r, c], to: legalList[li].to });
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    console.warn('Lance nao reconhecido: "' + san + '"');
+    return false;
+  }
+
+  return eng.makeMove(candidates[0].from, candidates[0].to, promoType);
 }
 
 /* =====================================================
-   REPLAY — auto-play com contador local independente
-===================================================== */
-function toggleReplayAuto() {
-  if (replayInterval) { stopReplayAuto(); return; }
-
-  if (replayTarget >= replayMoves.length) { _replayApplyTo(0); }
-
-  var btn = document.getElementById('replay-play');
-  if (btn) btn.textContent = 'Pausar';
-
-  var cur = replayTarget + 1;
-
-  replayInterval = setInterval(function() {
-    if (cur > replayMoves.length) { stopReplayAuto(); return; }
-    _replayApplyTo(cur);
-    cur++;
-  }, 1000);
-}
-
-function stopReplayAuto() {
-  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
-  var btn = document.getElementById('replay-play');
-  if (btn) btn.textContent = 'Play';
-}
-
-/* =====================================================
-   REPLAY — aplica movimentos ate idx usando parser SAN direto
+   REPLAY — aplica lances até idx
 ===================================================== */
 function _replayApplyTo(idx) {
   idx          = Math.max(0, Math.min(replayMoves.length, idx));
@@ -474,8 +554,9 @@ function _replayApplyTo(idx) {
   replayEngine = new ChessEngine();
 
   for (var i = 0; i < idx; i++) {
-    if (!applyMoveBySAN(replayEngine, replayMoves[i])) {
-      console.warn('Lance ' + (i + 1) + ' nao reconhecido: "' + replayMoves[i] + '"');
+    var san = replayMoves[i];
+    if (!applyMoveBySAN(replayEngine, san)) {
+      console.warn('Lance ' + (i+1) + ' falhou: "' + san + '"');
     }
   }
 
@@ -487,103 +568,68 @@ function _replayApplyTo(idx) {
 }
 
 /* =====================================================
-   REPLAY — parser SAN DIRETO (sem gerar contra-SANs)
-   Decodifica o texto e encontra o lance legal correspondente
+   REPLAY — navegacao manual
 ===================================================== */
-function applyMoveBySAN(eng, san) {
-  if (!san) return false;
-  var color = eng.turn;
-  var FILES = 'abcdefgh';
-  var RANKS = '87654321';
+function replayGoTo(idx) {
+  stopReplayAuto();
+  _replayApplyTo(idx);
+}
 
-  /* Remove anotacoes de check / checkmate / NAG */
-  var s = san.replace(/[+#!?]/g, '').trim();
+/* =====================================================
+   REPLAY — Play automático com contador local
+===================================================== */
+function toggleReplayAuto() {
+  if (replayInterval) { stopReplayAuto(); return; }
+  if (replayTarget >= replayMoves.length) { _replayApplyTo(0); }
+  var btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '⏸ Pausar';
+  var cur = replayTarget + 1;
+  replayInterval = setInterval(function() {
+    if (cur > replayMoves.length) { stopReplayAuto(); return; }
+    _replayApplyTo(cur);
+    cur++;
+  }, 1000);
+}
 
-  /* Roque */
-  if (s === 'O-O-O' || s === '0-0-0') {
-    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
-      var p = eng.board[r] && eng.board[r][c];
-      if (!p || p.color !== color || p.type !== 'K') continue;
-      var moves = eng.legalMoves(r, c);
-      for (var mi = 0; mi < moves.length; mi++) {
-        if (moves[mi].castle === 'Q') { eng.makeMove([r, c], moves[mi].to, 'Q'); return true; }
-      }
+function stopReplayAuto() {
+  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
+  var btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '▶ Play';
+}
+
+/* =====================================================
+   REPLAY — contador e histórico
+===================================================== */
+function updateReplayCounter() {
+  var e = document.getElementById('replay-move-counter');
+  if (e) e.textContent = 'Lance ' + replayTarget + ' de ' + replayMoves.length;
+}
+
+function renderReplayHistory() {
+  var box = document.getElementById('replay-move-history');
+  if (!box) return;
+  box.innerHTML = '';
+  for (var i = 0; i < replayMoves.length; i += 2) {
+    var row = document.createElement('div');
+    row.className = 'move-row';
+    var num = document.createElement('span');
+    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
+    var w = document.createElement('span');
+    w.className = 'move-san' + (replayTarget === i+1 ? ' move-active' : '');
+    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
+    (function(idx) { w.addEventListener('click', function() { replayGoTo(idx); }); })(i+1);
+    var b = document.createElement('span');
+    b.className = 'move-san' + (replayTarget === i+2 ? ' move-active' : '');
+    b.textContent = replayMoves[i+1] || '';
+    if (replayMoves[i+1]) {
+      b.style.cursor = 'pointer';
+      (function(idx) { b.addEventListener('click', function() { replayGoTo(idx); }); })(i+2);
     }
-    return false;
+    row.appendChild(num); row.appendChild(w); row.appendChild(b);
+    box.appendChild(row);
   }
-  if (s === 'O-O' || s === '0-0') {
-    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
-      var p = eng.board[r] && eng.board[r][c];
-      if (!p || p.color !== color || p.type !== 'K') continue;
-      var moves = eng.legalMoves(r, c);
-      for (var mi = 0; mi < moves.length; mi++) {
-        if (moves[mi].castle === 'K') { eng.makeMove([r, c], moves[mi].to, 'Q'); return true; }
-      }
-    }
-    return false;
-  }
-
-  /* Promocao: extrai tipo e remove do texto */
-  var promoType = 'Q';
-  var eqIdx = s.indexOf('=');
-  if (eqIdx !== -1 && eqIdx < s.length - 1) {
-    promoType = s[eqIdx + 1] || 'Q';
-    s = s.slice(0, eqIdx);
-  }
-
-  /* Identificar tipo de peca */
-  var pieceType = 'P';
-  var PIECE_LETTERS = 'KQRBN';
-  if (s.length > 0 && PIECE_LETTERS.indexOf(s[0]) !== -1) {
-    pieceType = s[0];
-    s = s.slice(1);
-  }
-
-  /* Remove indicador de captura */
-  s = s.replace('x', '');
-
-  /* Casa de destino: ultimas 2 letras */
-  if (s.length < 2) return false;
-  var destStr = s.slice(-2);
-  var toCol   = FILES.indexOf(destStr[0]);
-  var toRow   = RANKS.indexOf(destStr[1]);
-  if (toCol === -1 || toRow === -1) return false;
-
-  /* Desambiguacao: o que sobrar antes do destino */
-  var disambig = s.slice(0, s.length - 2);
-
-  /* Encontra o lance legal correspondente */
-  var candidates = [];
-  for (var r = 0; r < 8; r++) {
-    for (var c = 0; c < 8; c++) {
-      var piece = eng.board[r] && eng.board[r][c];
-      if (!piece || piece.color !== color || piece.type !== pieceType) continue;
-
-      /* Aplica desambiguacao */
-      if (disambig.length > 0) {
-        var fileChar = null, rankChar = null;
-        for (var di = 0; di < disambig.length; di++) {
-          if (FILES.indexOf(disambig[di]) !== -1) fileChar = disambig[di];
-          else if (RANKS.indexOf(disambig[di]) !== -1) rankChar = disambig[di];
-        }
-        if (fileChar !== null && FILES.indexOf(fileChar) !== c) continue;
-        if (rankChar !== null && RANKS.indexOf(rankChar) !== r) continue;
-      }
-
-      var legal = eng.legalMoves(r, c);
-      for (var li = 0; li < legal.length; li++) {
-        if (legal[li].to[0] === toRow && legal[li].to[1] === toCol) {
-          candidates.push({ from: [r, c], to: legal[li].to });
-        }
-      }
-    }
-  }
-
-  if (candidates.length === 0) return false;
-
-  /* Aplica o primeiro candidato valido */
-  eng.makeMove(candidates[0].from, candidates[0].to, promoType);
-  return true;
+  var active = box.querySelector('.move-active');
+  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
 }
 
 /* =====================================================
@@ -614,7 +660,7 @@ function replayRenderBoard() {
     if (replayEngine.lastMove) {
       var fr = replayEngine.lastMove.from[0], fc = replayEngine.lastMove.from[1];
       var tr = replayEngine.lastMove.to[0],   tc = replayEngine.lastMove.to[1];
-      if ((vr === fr && vc === fc) || (vr === tr && vc === tc)) sq.classList.add('last-move');
+      if ((vr===fr && vc===fc)||(vr===tr && vc===tc)) sq.classList.add('last-move');
     }
     var piece = replayEngine.piece(vr, vc);
     if (piece) {
@@ -624,38 +670,6 @@ function replayRenderBoard() {
       sq.appendChild(span);
     }
   });
-}
-
-function renderReplayHistory() {
-  var box = document.getElementById('replay-move-history');
-  if (!box) return;
-  box.innerHTML = '';
-  for (var i = 0; i < replayMoves.length; i += 2) {
-    var row = document.createElement('div');
-    row.className = 'move-row';
-    var num = document.createElement('span');
-    num.className = 'move-num'; num.textContent = (Math.floor(i / 2) + 1) + '.';
-    var w = document.createElement('span');
-    w.className = 'move-san' + (replayTarget === i + 1 ? ' move-active' : '');
-    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
-    (function(idx) { w.addEventListener('click', function() { replayGoTo(idx); }); })(i + 1);
-    var b = document.createElement('span');
-    b.className = 'move-san' + (replayTarget === i + 2 ? ' move-active' : '');
-    b.textContent = replayMoves[i + 1] || '';
-    if (replayMoves[i + 1]) {
-      b.style.cursor = 'pointer';
-      (function(idx) { b.addEventListener('click', function() { replayGoTo(idx); }); })(i + 2);
-    }
-    row.appendChild(num); row.appendChild(w); row.appendChild(b);
-    box.appendChild(row);
-  }
-  var active = box.querySelector('.move-active');
-  if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
-
-function updateReplayCounter() {
-  var e = document.getElementById('replay-move-counter');
-  if (e) e.textContent = 'Lance ' + replayTarget + ' de ' + replayMoves.length;
 }
 
 /* =====================================================
@@ -675,34 +689,31 @@ async function spectateGame() {
 
     isSpectator = true; roomCode = code; myColor = 'w';
     engine.deserialize(data.state);
-
-    function lbl(id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; }
+    var lbl = function(id, txt) { var e = document.getElementById(id); if (e) e.textContent = txt; };
     lbl('label-top',    data.blackName || 'Pretas');
     lbl('label-bottom', data.whiteName || 'Brancas');
     lbl('avatar-top',   '♟'); lbl('avatar-bottom', '♙');
     buildBoard(); renderGame(); showScreen('game');
-
     var hide = function(id) { var e = document.getElementById(id); if (e) e.classList.add('hidden'); };
     var show = function(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
     hide('btn-resign'); hide('btn-new-game');
     show('btn-back-lobby'); show('spectator-bar');
-    lbl('status-bar', 'Assistindo — sala ' + code);
-
+    lbl('status-bar', '👁 Assistindo — sala ' + code);
     specRef = db.ref('rooms/' + code);
     specRef.on('value', function(snap) {
       var d = snap.val(); if (!d) return;
       engine.deserialize(d.state); renderGame();
       var turn = (d.state && d.state.turn === 'w') ? 'Brancas' : 'Pretas';
-      lbl('status-bar', turn + ' jogam — sala ' + code);
+      lbl('status-bar', '👁 ' + turn + ' jogam — sala ' + code);
       if (d.status === 'finished' || d.status === 'resigned' || d.status === 'abandoned') {
-        lbl('status-bar', 'Partida encerrada'); specRef.off();
+        lbl('status-bar', '👁 Partida encerrada'); specRef.off();
       }
     });
   } catch (e) { showLobbyError('Erro ao conectar: ' + e.message); }
 }
 
 /* =====================================================
-   CRIAR / ENTRAR NA PARTIDA
+   CRIAR PARTIDA
 ===================================================== */
 function generateRoomCode() {
   var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -744,6 +755,9 @@ async function createGame() {
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Criar Partida'; } }
 }
 
+/* =====================================================
+   ENTRAR NA PARTIDA
+===================================================== */
 async function joinGame() {
   var input = document.getElementById('input-room');
   var code  = input ? input.value.trim().toUpperCase() : '';
@@ -755,8 +769,8 @@ async function joinGame() {
     roomRef = db.ref('rooms/' + code);
     var snap = await roomRef.once('value');
     var data = snap.val();
-    if (!data)       { showLobbyError('Sala nao encontrada.');  roomRef = null; return; }
-    if (data.black)  { showLobbyError('Sala ja esta cheia.');   roomRef = null; return; }
+    if (!data)      { showLobbyError('Sala nao encontrada.');  roomRef = null; return; }
+    if (data.black) { showLobbyError('Sala ja esta cheia.');   roomRef = null; return; }
     if (data.status === 'finished' || data.status === 'resigned') { showLobbyError('Partida ja encerrada.'); roomRef = null; return; }
     roomCode = code; myColor = 'b'; engine.deserialize(data.state);
     var myName = (currentUser && (currentUser.displayName || (currentUser.email ? currentUser.email.split('@')[0] : ''))) || 'Jogador';
@@ -805,10 +819,10 @@ function startMultiplayerGame(myName, oppName) {
   var myPhoto   = window._myPhotoURL || null;
   var mySymbol  = myColor === 'w' ? '♙' : '♟';
   var oppSymbol = myColor === 'w' ? '♟' : '♙';
-  setPlayerCard('avatar-bottom', 'label-bottom',
-    myName + ' (' + (myColor === 'w' ? 'Brancas' : 'Pretas') + ')', myPhoto, mySymbol);
-  setPlayerCard('avatar-top', 'label-top',
-    oppName + ' (' + (myColor === 'w' ? 'Pretas' : 'Brancas') + ')', null, oppSymbol);
+  setPlayerCard('avatar-bottom','label-bottom',
+    myName  + ' (' + (myColor==='w'?'Brancas':'Pretas') + ')', myPhoto, mySymbol);
+  setPlayerCard('avatar-top','label-top',
+    oppName + ' (' + (myColor==='w'?'Pretas':'Brancas') + ')', null, oppSymbol);
   buildBoard(); renderGame(); showScreen('game');
   var show = function(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
   var hide = function(id) { var e = document.getElementById(id); if (e) e.classList.add('hidden'); };
@@ -817,11 +831,11 @@ function startMultiplayerGame(myName, oppName) {
     var data = snap.val(); if (!data) return;
     if (data.status === 'resigned' && data.winner !== myColor) {
       engine.deserialize(data.state); renderGame(); gameActive = false;
-      saveGame('win'); showGameOver('Vitoria!', 'O oponente resignou.'); return;
+      saveGame('win'); showGameOver('Vitoria! 🏆', 'O oponente resignou.'); return;
     }
     if (data.status === 'abandoned') {
       gameActive = false; saveGame('win');
-      showGameOver('Vitoria!', 'O oponente abandonou.'); return;
+      showGameOver('Vitoria! 🏆', 'O oponente abandonou.'); return;
     }
     if (data.state && data.state.turn === myColor) {
       engine.deserialize(data.state); renderGame();
@@ -849,10 +863,10 @@ function startAIGame() {
   var diffLabels = { iniciante:'Iniciante', intermediario:'Intermediario', avancado:'Avancado', expert:'Expert' };
   var myPhoto  = window._myPhotoURL || null;
   var mySymbol = myColor === 'w' ? '♙' : '♟';
-  setPlayerCard('avatar-bottom', 'label-bottom',
-    'Voce (' + (myColor === 'w' ? 'Brancas' : 'Pretas') + ')', myPhoto, mySymbol);
-  setPlayerCard('avatar-top', 'label-top',
-    'IA — ' + diffLabels[selectedDiff], null, '');
+  setPlayerCard('avatar-bottom','label-bottom',
+    'Voce (' + (myColor==='w'?'Brancas':'Pretas') + ')', myPhoto, mySymbol);
+  setPlayerCard('avatar-top','label-top',
+    'IA — ' + (diffLabels[selectedDiff] || selectedDiff), null, '🤖');
   buildBoard(); renderGame(); showScreen('game');
   var show = function(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
   var hide = function(id) { var e = document.getElementById(id); if (e) e.classList.add('hidden'); };
@@ -933,25 +947,25 @@ function renderGame() {
     if (engine.lastMove) {
       var fv = logicToView(engine.lastMove.from[0], engine.lastMove.from[1]);
       var tv = logicToView(engine.lastMove.to[0],   engine.lastMove.to[1]);
-      if ((vr === fv[0] && vc === fv[1]) || (vr === tv[0] && vc === tv[1])) sq.classList.add('last-move');
+      if ((vr===fv[0] && vc===fv[1])||(vr===tv[0] && vc===tv[1])) sq.classList.add('last-move');
     }
     var piece = engine.piece(lc[0], lc[1]);
     if (piece) {
       var span = document.createElement('span');
-      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
+      span.className = 'piece ' + (piece.color==='w' ? 'piece-white' : 'piece-black');
       span.textContent = SYMBOLS[piece.color + piece.type] || '?';
       sq.appendChild(span);
-      if (piece.type === 'K' && piece.color === engine.turn && engine.status === 'check')
+      if (piece.type==='K' && piece.color===engine.turn && engine.status==='check')
         sq.classList.add('in-check');
     }
   });
   if (selectedSq !== null) {
     var sv = logicToView(selectedSq[0], selectedSq[1]);
-    var sel = document.querySelector('#chessboard [data-row="' + sv[0] + '"][data-col="' + sv[1] + '"]');
+    var sel = document.querySelector('#chessboard [data-row="'+sv[0]+'"][data-col="'+sv[1]+'"]');
     if (sel) sel.classList.add('selected');
     legalMovesCache.forEach(function(m) {
       var mv = logicToView(m.to[0], m.to[1]);
-      var el = document.querySelector('#chessboard [data-row="' + mv[0] + '"][data-col="' + mv[1] + '"]');
+      var el = document.querySelector('#chessboard [data-row="'+mv[0]+'"][data-col="'+mv[1]+'"]');
       if (el) el.classList.add(engine.piece(m.to[0], m.to[1]) || m.enPassant ? 'capture-hint' : 'move-hint');
     });
   }
@@ -973,20 +987,20 @@ function onSquareClick(e) {
   var piece = engine.piece(lr, lcol);
   if (selectedSq !== null) {
     var slr = selectedSq[0], slc = selectedSq[1];
-    var move = legalMovesCache.find(function(m) { return m.to[0] === lr && m.to[1] === lcol; });
+    var move = legalMovesCache.find(function(m) { return m.to[0]===lr && m.to[1]===lcol; });
     if (move) {
-      if (engine.board[slr][slc] && engine.board[slr][slc].type === 'P' && (lr === 0 || lr === 7)) {
+      if (engine.board[slr][slc] && engine.board[slr][slc].type==='P' && (lr===0||lr===7)) {
         pendingPromotion = { from:[slr,slc], to:[lr,lcol] }; showPromotion(); return;
       }
-      doMove([slr, slc], [lr, lcol]); return;
+      doMove([slr,slc],[lr,lcol]); return;
     }
-    if (piece && piece.color === myColor) {
-      selectedSq = [lr, lcol]; legalMovesCache = engine.legalMoves(lr, lcol); renderGame(); return;
+    if (piece && piece.color===myColor) {
+      selectedSq=[lr,lcol]; legalMovesCache=engine.legalMoves(lr,lcol); renderGame(); return;
     }
-    selectedSq = null; legalMovesCache = []; renderGame(); return;
+    selectedSq=null; legalMovesCache=[]; renderGame(); return;
   }
-  if (piece && piece.color === myColor) {
-    selectedSq = [lr, lcol]; legalMovesCache = engine.legalMoves(lr, lcol); renderGame();
+  if (piece && piece.color===myColor) {
+    selectedSq=[lr,lcol]; legalMovesCache=engine.legalMoves(lr,lcol); renderGame();
   }
 }
 
@@ -997,23 +1011,23 @@ async function doMove(from, to, promoteTo) {
   promoteTo = promoteTo || 'Q';
   if (!engine.makeMove(from, to, promoteTo)) return;
   selectedSq = null; legalMovesCache = []; renderGame();
-  if (gameMode === 'multiplayer' && roomRef) {
+  if (gameMode==='multiplayer' && roomRef) {
     try { await roomRef.update({ state: engine.serialize() }); }
     catch (e) { console.error('Erro ao salvar movimento:', e); }
   }
-  if (engine.status === 'checkmate') {
-    if (gameMode === 'multiplayer' && roomRef)
+  if (engine.status==='checkmate') {
+    if (gameMode==='multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:myColor }).catch(function(){});
-    gameActive = false; saveGame('win');
-    showGameOver('Xeque-mate!', 'Voce venceu! Parabens!'); return;
+    gameActive=false; saveGame('win');
+    showGameOver('Xeque-mate! 🏆','Voce venceu! Parabens!'); return;
   }
-  if (engine.status === 'stalemate') {
-    if (gameMode === 'multiplayer' && roomRef)
+  if (engine.status==='stalemate') {
+    if (gameMode==='multiplayer' && roomRef)
       await roomRef.update({ status:'finished', winner:null }).catch(function(){});
-    gameActive = false; saveGame('draw');
-    showGameOver('Empate!', 'Afogamento — nenhum movimento legal.'); return;
+    gameActive=false; saveGame('draw');
+    showGameOver('Empate!','Afogamento — nenhum movimento legal.'); return;
   }
-  if (gameMode === 'ai' && engine.turn === aiColor) scheduleAIMove();
+  if (gameMode==='ai' && engine.turn===aiColor) scheduleAIMove();
 }
 
 /* =====================================================
@@ -1045,18 +1059,18 @@ function updateStatusBar() {
   var bar = document.getElementById('status-bar');
   if (!bar) return;
   bar.className = 'status-bar';
-  if (isSpectator) { bar.textContent = 'Assistindo — ' + (engine.turn === 'w' ? 'Brancas' : 'Pretas') + ' jogam'; return; }
+  if (isSpectator) { bar.textContent = '👁 Assistindo — ' + (engine.turn==='w'?'Brancas':'Pretas') + ' jogam'; return; }
   if (aiThinking)  { bar.innerHTML = 'IA pensando <span class="thinking-dots"><span></span><span></span><span></span></span>'; return; }
   var isMyTurn = engine.turn === myColor;
   var msgs = {
-    playing:   isMyTurn ? 'Sua vez' : (gameMode === 'ai' ? 'IA pensando...' : 'Vez do oponente'),
-    check:     isMyTurn ? 'Xeque! Defenda seu rei' : 'Oponente esta em xeque',
+    playing:   isMyTurn ? 'Sua vez' : (gameMode==='ai' ? 'IA pensando...' : 'Vez do oponente'),
+    check:     isMyTurn ? '⚠ Xeque! Defenda seu rei' : 'Oponente esta em xeque',
     checkmate: 'Xeque-mate!',
     stalemate: 'Afogamento!'
   };
   bar.textContent = msgs[engine.status] || '';
-  if (engine.status === 'check'   && isMyTurn) bar.classList.add('check');
-  if (engine.status === 'playing' && isMyTurn) bar.classList.add('your-turn');
+  if (engine.status==='check'   && isMyTurn) bar.classList.add('check');
+  if (engine.status==='playing' && isMyTurn) bar.classList.add('your-turn');
 }
 
 /* =====================================================
@@ -1101,8 +1115,8 @@ function updateCaptured() {
       el.appendChild(s);
     }
   }
-  if (myColor === 'w') { render('b','captured-bottom'); render('w','captured-top'); }
-  else                  { render('w','captured-bottom'); render('b','captured-top'); }
+  if (myColor==='w') { render('b','captured-bottom'); render('w','captured-top'); }
+  else                { render('w','captured-bottom'); render('b','captured-top'); }
 }
 
 /* =====================================================
@@ -1123,12 +1137,12 @@ async function resign() {
   if (!gameActive || isSpectator) return;
   if (!confirm('Tem certeza que deseja resignar?')) return;
   gameActive = false;
-  if (gameMode === 'multiplayer' && roomRef) {
-    var enemy = myColor === 'w' ? 'b' : 'w';
+  if (gameMode==='multiplayer' && roomRef) {
+    var enemy = myColor==='w' ? 'b' : 'w';
     await roomRef.update({ status:'resigned', winner:enemy, state:engine.serialize() }).catch(function(){});
   }
   saveGame('resigned');
-  showGameOver('Voce resignou', gameMode === 'ai' ? 'A IA venceu.' : 'O oponente venceu.');
+  showGameOver('Voce resignou', gameMode==='ai' ? 'A IA venceu.' : 'O oponente venceu.');
 }
 
 /* =====================================================
@@ -1140,7 +1154,9 @@ function showGameOver(title, msg) {
   var i = document.getElementById('gameover-icon');
   if (t) t.textContent = title;
   if (m) m.textContent = msg;
-  if (i) i.textContent = title.indexOf('Empate') !== -1 ? '' : title.indexOf('resignou') !== -1 ? '' : '♟';
+  if (i) i.textContent = title.indexOf('🏆') !== -1 ? '🏆'
+    : title.indexOf('Empate') !== -1 ? '🤝'
+    : title.indexOf('resignou') !== -1 ? '🏳' : '♟';
   var hide = function(id) { var e = document.getElementById(id); if (e) e.classList.add('hidden'); };
   var show = function(id) { var e = document.getElementById(id); if (e) e.classList.remove('hidden'); };
   hide('btn-resign'); show('btn-new-game');
