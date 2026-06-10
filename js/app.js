@@ -214,7 +214,214 @@ function initAuthUI() {
   el('btn-login-google',    'click',   loginWithGoogle);
   el('btn-register',        'click',   registerWithEmail);
   el('btn-register-google', 'click',   loginWithGoogle);
-  el('btn-guest',           'click',   loginAsGuest);
+  // btn-guest removido — autenticação anônima desativada
+}
+
+/* =====================================================
+   REPLAY — carrega partida
+===================================================== */
+async function loadReplay(gameId) {
+  showScreen('replay');
+  try {
+    const snap = await db.ref('games/' + gameId).once('value');
+    replayGameData = snap.val();
+    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
+
+    const isWhite = replayGameData.myColor === 'w';
+    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+    lbl('replay-label-bottom', isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`);
+    lbl('replay-label-top',    isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`);
+    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
+    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
+
+    replayMoves  = replayGameData.moves ? replayGameData.moves.split('|').filter(Boolean) : [];
+    replayIndex  = 0;
+    replayEngine = new ChessEngine();
+
+    const slider = document.getElementById('replay-slider');
+    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
+
+    buildReplayBoard();
+    replayRenderBoard();
+    renderReplayHistory();
+    updateReplayCounter();
+
+    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
+    lbl('replay-status', `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
+
+  } catch (e) {
+    console.error(e);
+    alert('Erro ao carregar replay.');
+    openHistory();
+  }
+}
+
+/* =====================================================
+   REPLAY — navegar para posição específica (uso manual)
+   Nota: NÃO chama stopReplayAuto para não quebrar o Play
+===================================================== */
+function replayGoTo(targetIndex) {
+  stopReplayAuto(); // só para quando o usuário navega manualmente
+  _replayApplyTo(targetIndex);
+}
+
+/* Função interna — aplica movimentos até targetIndex sem parar o auto-play */
+function _replayApplyTo(targetIndex) {
+  targetIndex = Math.max(0, Math.min(replayMoves.length, targetIndex));
+
+  replayEngine = new ChessEngine();
+  let applied  = 0;
+  for (let i = 0; i < targetIndex; i++) {
+    if (applyMoveBySAN(replayEngine, replayMoves[i])) applied++;
+  }
+  replayIndex = applied;
+
+  const slider = document.getElementById('replay-slider');
+  if (slider) slider.value = replayIndex;
+  updateReplayCounter();
+  replayRenderBoard();
+  renderReplayHistory();
+}
+
+/* =====================================================
+   REPLAY — Play automático (intervalo de 1s)
+===================================================== */
+function toggleReplayAuto() {
+  if (replayInterval) {
+    stopReplayAuto();
+    return;
+  }
+
+  // Se já está no final, volta ao início antes de começar
+  if (replayIndex >= replayMoves.length) {
+    _replayApplyTo(0);
+  }
+
+  const btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '⏸ Pausar';
+
+  replayInterval = setInterval(() => {
+    if (replayIndex >= replayMoves.length) {
+      stopReplayAuto();
+      return;
+    }
+    // Usa _replayApplyTo (não replayGoTo) para não parar o intervalo
+    _replayApplyTo(replayIndex + 1);
+  }, 1000);
+}
+
+function stopReplayAuto() {
+  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
+  const btn = document.getElementById('replay-play');
+  if (btn) btn.textContent = '▶ Play';
+}
+
+/* =====================================================
+   REPLAY — aplicar movimento SAN no engine
+===================================================== */
+function applyMoveBySAN(eng, san) {
+  if (!san) return false;
+  const color    = eng.turn;
+  const sanClean = san.replace(/[+#!?]/g, '');
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (eng.board[r]?.[c]?.color !== color) continue;
+      const legal = eng.legalMoves(r, c);
+      for (const mv of legal) {
+        for (const promo of ['Q','R','B','N']) {
+          const clone = cloneEngine(eng);
+          if (!clone.makeMove([r,c], mv.to, promo)) continue;
+          const genSan = (clone.history[clone.history.length - 1] || '').replace(/[+#!?]/g, '');
+          if (genSan === sanClean) { eng.makeMove([r,c], mv.to, promo); return true; }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function cloneEngine(src) {
+  const dst = new ChessEngine();
+  dst.board     = src.board.map(row => row.map(p => p ? {...p} : null));
+  dst.turn      = src.turn;
+  dst.castling  = { ...src.castling };
+  dst.enPassant = src.enPassant ? [...src.enPassant] : null;
+  dst.history   = [...src.history];
+  dst.captured  = { w: [...src.captured.w], b: [...src.captured.b] };
+  dst.status    = src.status;
+  dst.lastMove  = src.lastMove ? { from:[...src.lastMove.from], to:[...src.lastMove.to] } : null;
+  return dst;
+}
+
+/* =====================================================
+   REPLAY — construir tabuleiro visual
+===================================================== */
+function buildReplayBoard() {
+  const boardEl = document.getElementById('replay-chessboard');
+  if (!boardEl) return;
+  boardEl.innerHTML = '';
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const sq = document.createElement('div');
+      sq.className = 'square ' + ((row + col) % 2 === 0 ? 'light' : 'dark');
+      sq.dataset.row = row; sq.dataset.col = col;
+      boardEl.appendChild(sq);
+    }
+  }
+}
+
+function replayRenderBoard() {
+  const boardEl = document.getElementById('replay-chessboard');
+  if (!boardEl) return;
+  boardEl.querySelectorAll('.square').forEach(sq => {
+    const vr = parseInt(sq.dataset.row);
+    const vc = parseInt(sq.dataset.col);
+    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
+    sq.innerHTML = '';
+
+    if (replayEngine.lastMove) {
+      const [fr, fc] = replayEngine.lastMove.from;
+      const [tr, tc] = replayEngine.lastMove.to;
+      if ((vr===fr && vc===fc) || (vr===tr && vc===tc)) sq.classList.add('last-move');
+    }
+
+    const piece = replayEngine.piece(vr, vc);
+    if (piece) {
+      const span = document.createElement('span');
+      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
+      span.textContent = SYMBOLS[piece.color + piece.type] || '?';
+      sq.appendChild(span);
+    }
+  });
+}
+
+function renderReplayHistory() {
+  const box = document.getElementById('replay-move-history');
+  if (!box) return;
+  box.innerHTML = '';
+  for (let i = 0; i < replayMoves.length; i += 2) {
+    const row = document.createElement('div');
+    row.className = 'move-row';
+    const num = document.createElement('span');
+    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
+    const w = document.createElement('span');
+    w.className = 'move-san' + (replayIndex === i+1 ? ' move-active' : '');
+    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
+    w.addEventListener('click', () => replayGoTo(i+1));
+    const b = document.createElement('span');
+    b.className = 'move-san' + (replayIndex === i+2 ? ' move-active' : '');
+    b.textContent = replayMoves[i+1] || '';
+    if (replayMoves[i+1]) { b.style.cursor = 'pointer'; b.addEventListener('click', () => replayGoTo(i+2)); }
+    row.appendChild(num); row.appendChild(w); row.appendChild(b);
+    box.appendChild(row);
+  }
+  const active = box.querySelector('.move-active');
+  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
+}
+
+function updateReplayCounter() {
+  const el = document.getElementById('replay-move-counter');
+  if (el) el.textContent = `Lance ${replayIndex} de ${replayMoves.length}`;
 }
 
 /* =====================================================
@@ -437,200 +644,6 @@ async function openHistory() {
     if (listEl) listEl.innerHTML = '<div class="history-empty">Erro ao carregar histórico.</div>';
     console.error(e);
   }
-}
-
-/* =====================================================
-   REPLAY
-===================================================== */
-async function loadReplay(gameId) {
-  showScreen('replay');
-  try {
-    const snap = await db.ref('games/' + gameId).once('value');
-    replayGameData = snap.val();
-    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
-
-    const isWhite = replayGameData.myColor === 'w';
-    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
-    lbl('replay-label-bottom', isWhite ? `${replayGameData.playerName} (Brancas)` : `${replayGameData.playerName} (Pretas)`);
-    lbl('replay-label-top',    isWhite ? `${replayGameData.opponentName} (Pretas)` : `${replayGameData.opponentName} (Brancas)`);
-    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
-    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
-
-    replayMoves  = replayGameData.moves ? replayGameData.moves.split('|').filter(Boolean) : [];
-    replayIndex  = 0;
-    replayEngine = new ChessEngine();
-
-    const slider = document.getElementById('replay-slider');
-    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
-
-    buildReplayBoard();
-    replayRenderBoard();
-    renderReplayHistory();
-    updateReplayCounter();
-
-    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
-    lbl('replay-status', `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
-
-  } catch (e) {
-    console.error(e);
-    alert('Erro ao carregar replay.');
-    openHistory();
-  }
-}
-
-function buildReplayBoard() {
-  const boardEl = document.getElementById('replay-chessboard');
-  if (!boardEl) return;
-  boardEl.innerHTML = '';
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
-      const sq = document.createElement('div');
-      sq.className = 'square';
-      sq.dataset.row = row; sq.dataset.col = col;
-      boardEl.appendChild(sq);
-    }
-  }
-  ['replay-coords-file-top','replay-coords-file-bottom'].forEach(id => {
-    const el = document.getElementById(id); if (!el) return;
-    el.innerHTML = '';
-    'abcdefgh'.split('').forEach(f => {
-      const s = document.createElement('span');
-      s.className = 'coord-label';
-      s.style.width = 'calc(var(--board-size) / 8)';
-      s.textContent = f; el.appendChild(s);
-    });
-  });
-  ['replay-coords-rank-left','replay-coords-rank-right'].forEach(id => {
-    const el = document.getElementById(id); if (!el) return;
-    el.innerHTML = '';
-    '87654321'.split('').forEach(r => {
-      const s = document.createElement('span');
-      s.className = 'coord-label';
-      s.style.height = 'calc(var(--board-size) / 8)';
-      s.textContent = r; el.appendChild(s);
-    });
-  });
-}
-
-function replayGoTo(targetIndex) {
-  stopReplayAuto();
-  targetIndex = Math.max(0, Math.min(replayMoves.length, targetIndex));
-  replayEngine = new ChessEngine();
-  let applied  = 0;
-  for (let i = 0; i < targetIndex; i++) {
-    if (applyMoveBySAN(replayEngine, replayMoves[i])) applied++;
-  }
-  replayIndex = applied;
-  const slider = document.getElementById('replay-slider');
-  if (slider) slider.value = replayIndex;
-  updateReplayCounter();
-  replayRenderBoard();
-  renderReplayHistory();
-}
-
-function applyMoveBySAN(eng, san) {
-  if (!san) return false;
-  const color    = eng.turn;
-  const sanClean = san.replace(/[+#!?]/g, '');
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      if (eng.board[r]?.[c]?.color !== color) continue;
-      const legal = eng.legalMoves(r, c);
-      for (const mv of legal) {
-        for (const promo of ['Q','R','B','N']) {
-          const clone = cloneEngine(eng);
-          if (!clone.makeMove([r,c], mv.to, promo)) continue;
-          const genSan = (clone.history[clone.history.length - 1] || '').replace(/[+#!?]/g, '');
-          if (genSan === sanClean) { eng.makeMove([r,c], mv.to, promo); return true; }
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function cloneEngine(src) {
-  const dst = new ChessEngine();
-  dst.board     = src.board.map(row => row.map(p => p ? {...p} : null));
-  dst.turn      = src.turn;
-  dst.castling  = { ...src.castling };
-  dst.enPassant = src.enPassant ? [...src.enPassant] : null;
-  dst.history   = [...src.history];
-  dst.captured  = { w: [...src.captured.w], b: [...src.captured.b] };
-  dst.status    = src.status;
-  dst.lastMove  = src.lastMove ? { from:[...src.lastMove.from], to:[...src.lastMove.to] } : null;
-  return dst;
-}
-
-function replayRenderBoard() {
-  const boardEl = document.getElementById('replay-chessboard');
-  if (!boardEl) return;
-  boardEl.querySelectorAll('.square').forEach(sq => {
-    const vr = parseInt(sq.dataset.row);
-    const vc = parseInt(sq.dataset.col);
-    sq.className = 'square ' + ((vr + vc) % 2 === 0 ? 'light' : 'dark');
-    sq.innerHTML = '';
-    if (replayEngine.lastMove) {
-      const [fr, fc] = replayEngine.lastMove.from;
-      const [tr, tc] = replayEngine.lastMove.to;
-      if ((vr===fr && vc===fc) || (vr===tr && vc===tc)) sq.classList.add('last-move');
-    }
-    const piece = replayEngine.piece(vr, vc);
-    if (piece) {
-      const span = document.createElement('span');
-      span.className = 'piece ' + (piece.color === 'w' ? 'piece-white' : 'piece-black');
-      span.textContent = SYMBOLS[piece.color + piece.type] || '?';
-      sq.appendChild(span);
-    }
-  });
-}
-
-function renderReplayHistory() {
-  const box = document.getElementById('replay-move-history');
-  if (!box) return;
-  box.innerHTML = '';
-  for (let i = 0; i < replayMoves.length; i += 2) {
-    const row = document.createElement('div');
-    row.className = 'move-row';
-    const num = document.createElement('span');
-    num.className = 'move-num'; num.textContent = (Math.floor(i/2)+1) + '.';
-    const w = document.createElement('span');
-    w.className = 'move-san' + (replayIndex === i+1 ? ' move-active' : '');
-    w.textContent = replayMoves[i] || ''; w.style.cursor = 'pointer';
-    w.addEventListener('click', () => replayGoTo(i+1));
-    const b = document.createElement('span');
-    b.className = 'move-san' + (replayIndex === i+2 ? ' move-active' : '');
-    b.textContent = replayMoves[i+1] || '';
-    if (replayMoves[i+1]) { b.style.cursor = 'pointer'; b.addEventListener('click', () => replayGoTo(i+2)); }
-    row.appendChild(num); row.appendChild(w); row.appendChild(b);
-    box.appendChild(row);
-  }
-  const active = box.querySelector('.move-active');
-  if (active) active.scrollIntoView({ block:'nearest', behavior:'smooth' });
-}
-
-function updateReplayCounter() {
-  const el = document.getElementById('replay-move-counter');
-  if (el) el.textContent = `Lance ${replayIndex} de ${replayMoves.length}`;
-}
-
-function toggleReplayAuto() {
-  if (replayInterval) {
-    stopReplayAuto();
-  } else {
-    const btn = document.getElementById('replay-play');
-    if (btn) btn.textContent = '⏸ Pausar';
-    replayInterval = setInterval(() => {
-      if (replayIndex >= replayMoves.length) { stopReplayAuto(); return; }
-      replayGoTo(replayIndex + 1);
-    }, 900);
-  }
-}
-
-function stopReplayAuto() {
-  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
-  const btn = document.getElementById('replay-play');
-  if (btn) btn.textContent = '▶ Play';
 }
 
 /* =====================================================
