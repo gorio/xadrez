@@ -74,96 +74,94 @@
   </div>
 
   <!-- ========== LOBBY ========== -->
-  <div id="screen-lobby" class="screen">
-    <div class="app-header">
-      <div class="header-logo">♟ Xadrez Online</div>
-      <div class="header-user">
-        <span id="header-username" class="header-username"></span>
-        <button id="btn-history" class="btn btn-small btn-secondary">📋 Histórico</button>
-        <button id="btn-logout"  class="btn btn-small btn-ghost">Sair</button>
-      </div>
-    </div>
-
-    <div class="lobby-body">
-      <div class="lobby-container">
-        <div class="logo">
-          <span class="logo-icon">♟</span>
-          <h1>Xadrez Online</h1>
-          <p>Jogo de xadrez em tempo real</p>
-        </div>
-
-        <div class="mode-selector">
-          <button class="mode-btn active" data-mode="multiplayer">
-            <span class="mode-icon">👥</span>
-            <span class="mode-label">Multijogador</span>
-            <span class="mode-desc">Jogue contra um amigo online</span>
-          </button>
-          <button class="mode-btn" data-mode="ai">
-            <span class="mode-icon">🤖</span>
-            <span class="mode-label">vs Computador</span>
-            <span class="mode-desc">Jogue contra a IA</span>
-          </button>
-        </div>
-
-        <!-- Painel Multijogador -->
-        <div id="panel-multiplayer" class="mode-panel">
-          <button id="btn-create" class="btn btn-primary btn-full">Criar Partida</button>
-          <div class="divider"><span>ou entre em uma sala</span></div>
-          <div class="join-group">
-            <input id="input-room" type="text" placeholder="Código da sala" maxlength="6" autocomplete="off" />
-            <button id="btn-join" class="btn btn-secondary">Entrar</button>
-          </div>
-          <div class="divider"><span>ou assista ao vivo</span></div>
-          <div class="join-group">
-            <input id="input-spectate" type="text" placeholder="Código da sala" maxlength="6" autocomplete="off" />
-            <button id="btn-spectate" class="btn btn-secondary">👁 Assistir</button>
-          </div>
-        </div>
-
-        <!-- Painel IA -->
-        <div id="panel-ai" class="mode-panel hidden">
-          <div class="ai-options">
-            <div class="option-group">
-              <label class="option-label">Jogar como</label>
-              <div class="color-selector">
-                <button class="color-btn active" data-color="w">♙ Brancas</button>
-                <button class="color-btn" data-color="random">🎲 Aleatório</button>
-                <button class="color-btn" data-color="b">♟ Pretas</button>
-              </div>
-            </div>
-            <div class="option-group">
-              <label class="option-label">Dificuldade</label>
-              <div class="difficulty-selector">
-                <button class="diff-btn" data-level="iniciante">
-                  <span class="diff-name">Iniciante</span>
-                  <span class="diff-desc">Para aprender</span>
-                  <div class="diff-stars">★☆☆☆</div>
-                </button>
-                <button class="diff-btn active" data-level="intermediario">
-                  <span class="diff-name">Intermediário</span>
-                  <span class="diff-desc">Desafiador</span>
-                  <div class="diff-stars">★★☆☆</div>
-                </button>
-                <button class="diff-btn" data-level="avancado">
-                  <span class="diff-name">Avançado</span>
-                  <span class="diff-desc">Difícil</span>
-                  <div class="diff-stars">★★★☆</div>
-                </button>
-                <button class="diff-btn" data-level="expert">
-                  <span class="diff-name">Expert</span>
-                  <span class="diff-desc">Implacável</span>
-                  <div class="diff-stars">★★★★</div>
-                </button>
-              </div>
-            </div>
-          </div>
-          <button id="btn-start-ai" class="btn btn-primary btn-full">Iniciar Partida</button>
-        </div>
-
-        <p id="lobby-error" class="error-msg"></p>
-      </div>
+<div id="screen-lobby" class="screen">
+  <div class="app-header">
+    <div class="header-logo">♟ Xadrez Online</div>
+    <div class="header-user">
+      <div id="header-avatar" class="header-avatar">♟</div>
+      <span id="header-username" class="header-username"></span>
+      <button id="btn-history" class="btn btn-small btn-secondary">📋 Histórico</button>
+      <button id="btn-logout"  class="btn btn-small btn-ghost">Sair</button>
     </div>
   </div>
+
+  <div class="lobby-body">
+    <div class="lobby-container">
+      <div class="logo">
+        <span class="logo-icon">♟</span>
+        <h1>Nova Partida</h1>
+      </div>
+
+      <div class="mode-selector">
+        <button class="mode-btn active" data-mode="multiplayer">
+          <span class="mode-icon">👥</span>
+          <span class="mode-label">Multijogador</span>
+          <span class="mode-desc">Jogue contra um amigo</span>
+        </button>
+        <button class="mode-btn" data-mode="ai">
+          <span class="mode-icon">🤖</span>
+          <span class="mode-label">vs Computador</span>
+          <span class="mode-desc">Jogue contra a IA</span>
+        </button>
+      </div>
+
+      <div id="panel-multiplayer" class="mode-panel">
+        <button id="btn-create" class="btn btn-primary btn-full">Criar Partida</button>
+        <div class="divider"><span>ou entre em uma sala</span></div>
+        <div class="join-group">
+          <input id="input-room" type="text" placeholder="Código da sala" maxlength="6" autocomplete="off" />
+          <button id="btn-join" class="btn btn-secondary">Entrar</button>
+        </div>
+        <div class="divider"><span>ou assista uma partida</span></div>
+        <div class="join-group">
+          <input id="input-spectate" type="text" placeholder="Código da sala" maxlength="6" autocomplete="off" />
+          <button id="btn-spectate" class="btn btn-secondary">👁 Assistir</button>
+        </div>
+      </div>
+
+      <div id="panel-ai" class="mode-panel hidden">
+        <div class="ai-options">
+          <div class="option-group">
+            <label class="option-label">Jogar como</label>
+            <div class="color-selector">
+              <button class="color-btn active" data-color="w">♙ Brancas</button>
+              <button class="color-btn" data-color="random">🎲 Aleatório</button>
+              <button class="color-btn" data-color="b">♟ Pretas</button>
+            </div>
+          </div>
+          <div class="option-group">
+            <label class="option-label">Dificuldade</label>
+            <div class="difficulty-selector">
+              <button class="diff-btn" data-level="iniciante">
+                <span class="diff-name">Iniciante</span>
+                <span class="diff-desc">Para aprender</span>
+                <div class="diff-stars">★☆☆☆</div>
+              </button>
+              <button class="diff-btn active" data-level="intermediario">
+                <span class="diff-name">Intermediário</span>
+                <span class="diff-desc">Desafiador</span>
+                <div class="diff-stars">★★☆☆</div>
+              </button>
+              <button class="diff-btn" data-level="avancado">
+                <span class="diff-name">Avançado</span>
+                <span class="diff-desc">Difícil</span>
+                <div class="diff-stars">★★★☆</div>
+              </button>
+              <button class="diff-btn" data-level="expert">
+                <span class="diff-name">Expert</span>
+                <span class="diff-desc">Implacável</span>
+                <div class="diff-stars">★★★★</div>
+              </button>
+            </div>
+          </div>
+        </div>
+        <button id="btn-start-ai" class="btn btn-primary btn-full">Iniciar Partida</button>
+      </div>
+
+      <p id="lobby-error" class="error-msg"></p>
+    </div>
+  </div>
+</div>
 
   <!-- ========== AGUARDANDO ========== -->
   <div id="screen-waiting" class="screen">

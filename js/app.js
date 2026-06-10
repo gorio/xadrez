@@ -82,14 +82,31 @@ window.addEventListener('DOMContentLoaded', () => {
     if (user) {
       myId = user.uid;
       const name = user.displayName || user.email?.split('@')[0] || 'Jogador';
-      const headerEl = document.getElementById('header-username');
-      if (headerEl) headerEl.textContent = name;
+
+      /* Nome no header */
+      const headerName = document.getElementById('header-username');
+      if (headerName) headerName.textContent = name;
+
+      /* Avatar no header — foto se tiver, iniciais se não tiver */
+      const headerAvatar = document.getElementById('header-avatar');
+      if (headerAvatar) {
+        const photo = user.photoURL;
+        if (photo) {
+          headerAvatar.innerHTML = `<img src="${photo}" alt="${name}" class="header-photo" />`;
+        } else {
+          const initials = name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
+          headerAvatar.textContent = initials;
+          headerAvatar.classList.add('header-avatar-initials');
+        }
+      }
+
       db.ref('users/' + user.uid).update({
         displayName: name,
         email:       user.email || '',
         photoURL:    user.photoURL || '',
         lastSeen:    Date.now()
       });
+
       showScreen('lobby');
     } else {
       showScreen('auth');
