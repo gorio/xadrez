@@ -409,52 +409,32 @@ function initReplayUI() {
   el('replay-slider',   'input',  e => replayGoTo(parseInt(e.target.value)));
 }
 
-/* =====================================================
-   REPLAY — aplica SAN com múltiplas estratégias
-===================================================== */
 function applyMoveBySAN(eng, san) {
   if (!san) return false;
   const color = eng.turn;
 
-  /* Normaliza a entrada em 4 variantes para comparação */
-  const norm = s => s
-    .replace(/[+#!?]/g, '')   // remove anotações
-    .replace(/x/g, '')         // remove captura
-    .replace(/=/g, '')         // remove promoção
-    .replace(/\s/g, '')
-    .trim();
+  // Normaliza em 4 variantes
+  const strip = s => s.replace(/[+#!?]/g, '').trim();
+  const stripX = s => strip(s).replace(/x/g, '');
+  const stripAll = s => stripX(s).replace(/=/g, '');
 
-  const normCapture = s => s
-    .replace(/[+#!?]/g, '')
-    .replace(/=/g, '')
-    .replace(/\s/g, '')
-    .trim();                   // mantém x para distinguir capturas
+  const sanA = strip(san);
+  const sanB = stripX(san);
+  const sanC = stripAll(san);
 
-  const sanFull  = san.replace(/[+#!?]/g, '').trim();   // mantém x e =
-  const sanNoX   = sanFull.replace(/x/g, '');            // sem x
-  const sanNorm  = norm(san);                             // sem nada
-  const sanCap   = normCapture(san);                      // sem +#!?=
-
+  // Coleta todos os movimentos legais com seus clones pré-aplicados
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       if (eng.board[r]?.[c]?.color !== color) continue;
-      const legal = eng.legalMoves(r, c);
-      for (const mv of legal) {
+      for (const mv of eng.legalMoves(r, c)) {
         for (const promo of ['Q', 'R', 'B', 'N']) {
           const clone = cloneEngine(eng);
           if (!clone.makeMove([r, c], mv.to, promo)) continue;
-          const gen     = clone.history[clone.history.length - 1] || '';
-          const genFull = gen.replace(/[+#!?]/g, '').trim();
-          const genNoX  = genFull.replace(/x/g, '');
-          const genNorm = norm(gen);
-          const genCap  = normCapture(gen);
-
-          if (
-            genFull === sanFull ||
-            genNoX  === sanNoX  ||
-            genNorm === sanNorm ||
-            genCap  === sanCap
-          ) {
+          const gen  = clone.history[clone.history.length - 1] || '';
+          const genA = strip(gen);
+          const genB = stripX(gen);
+          const genC = stripAll(gen);
+          if (genA === sanA || genB === sanB || genC === sanC) {
             eng.makeMove([r, c], mv.to, promo);
             return true;
           }
@@ -462,6 +442,35 @@ function applyMoveBySAN(eng, san) {
       }
     }
   }
+
+  // FALLBACK: tenta deduzir o destino a partir da SAN
+  // Ex: "h6" → coluna h, fileira 6 → [2][7]; "Qe6" → e6 → [2][4]
+  const files = 'abcdefgh';
+  const ranks = '87654321';
+  const dest  = san.replace(/[+#!?=KQRBNPX]/gi, '').slice(-2);
+  if (dest && dest.length === 2) {
+    const fc = files.indexOf(dest[0]);
+    const fr = ranks.indexOf(dest[1]);
+    if (fc !== -1 && fr !== -1) {
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (eng.board[r]?.[c]?.color !== color) continue;
+          for (const mv of eng.legalMoves(r, c)) {
+            if (mv.to[0] === fr && mv.to[1] === fc) {
+              // se há promoção na SAN, usa a peça indicada
+              const promoChar = san.match(/=([QRBN])/)?.[1] || 'Q';
+              if (eng.makeMove([r, c], mv.to, promoChar)) {
+                console.info(`Fallback por destino para "${san}": [${r},${c}]→[${fr},${fc}]`);
+                return true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  console.warn(`Lance não reconhecido: "${san}"`);
   return false;
 }
 
