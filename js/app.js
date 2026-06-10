@@ -257,39 +257,45 @@ async function loadReplay(gameId) {
 }
 
 /* =====================================================
-   REPLAY — manual: para o auto-play e navega
+   REPLAY — estado
 ===================================================== */
-function replayGoTo(targetIndex) {
+let replayTarget = 0; // posição raw no array (exibida no contador e slider)
+
+/* =====================================================
+   REPLAY — navega manualmente (para o auto-play)
+===================================================== */
+function replayGoTo(idx) {
   stopReplayAuto();
-  _replayApplyTo(targetIndex);
+  _replayApplyTo(idx);
 }
 
 /* =====================================================
-   REPLAY — interno: aplica até targetIndex SEM parar o auto
+   REPLAY — interno: aplica até idx SEM parar o auto-play
 ===================================================== */
-function _replayApplyTo(targetIndex) {
-  targetIndex  = Math.max(0, Math.min(replayMoves.length, targetIndex));
+function _replayApplyTo(idx) {
+  idx          = Math.max(0, Math.min(replayMoves.length, idx));
+  replayTarget = idx;           // sempre reflete a posição raw
   replayEngine = new ChessEngine();
-  replayIndex  = 0;
+  replayIndex  = 0;             // lances realmente aplicados (pode ser < idx se SAN falhar)
 
-  for (let i = 0; i < targetIndex; i++) {
-    const ok = applyMoveBySAN(replayEngine, replayMoves[i]);
-    if (ok) replayIndex++;
-    else {
-      /* Tenta aplicar o próximo mesmo assim para não travar */
-      console.warn('SAN não reconhecida, pulando:', replayMoves[i]);
+  for (let i = 0; i < idx; i++) {
+    if (applyMoveBySAN(replayEngine, replayMoves[i])) {
+      replayIndex++;
+    } else {
+      console.warn('SAN não reconhecida, posição pode divergir:', replayMoves[i]);
     }
   }
 
   const slider = document.getElementById('replay-slider');
-  if (slider) slider.value = replayIndex;
+  if (slider) slider.value = replayTarget;   // slider usa posição raw
   updateReplayCounter();
   replayRenderBoard();
   renderReplayHistory();
 }
 
 /* =====================================================
-   REPLAY — Play: avança 1 lance por segundo
+   REPLAY — Play automático: avança 1 lance/segundo
+   usa variável local `cur` independente de replayIndex
 ===================================================== */
 function toggleReplayAuto() {
   if (replayInterval) {
@@ -297,26 +303,25 @@ function toggleReplayAuto() {
     return;
   }
 
-  /* Se já chegou ao fim, reinicia do zero */
-  if (replayIndex >= replayMoves.length) {
+  /* Se já está no final, reinicia */
+  if (replayTarget >= replayMoves.length) {
     _replayApplyTo(0);
   }
 
   const btn = document.getElementById('replay-play');
   if (btn) btn.textContent = '⏸ Pausar';
 
-  let target = replayIndex + 1;
+  let cur = replayTarget + 1;   // contador local — não depende de replayIndex
 
   replayInterval = setInterval(() => {
-    if (target > replayMoves.length) {
+    if (cur > replayMoves.length) {
       stopReplayAuto();
       return;
     }
-    _replayApplyTo(target);
-    target++;
+    _replayApplyTo(cur);
+    cur++;
   }, 1000);
 }
-
 
 function stopReplayAuto() {
   if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
@@ -325,29 +330,130 @@ function stopReplayAuto() {
 }
 
 /* =====================================================
-   REPLAY — aplica um lance SAN no engine
-   Suporta: movimentos normais, roque (O-O/O-O-O),
-            capturas, promoções (b8=Q), en passant
+   REPLAY — contador usa replayTarget (posição raw)
+===================================================== */
+function updateReplayCounter() {
+  const e = document.getElementById('replay-move-counter');
+  if (e) e.textContent = `Lance ${replayTarget} de ${replayMoves.length}`;
+}
+
+/* =====================================================
+   REPLAY — histórico destaca pelo replayTarget (não replayIndex)
+===================================================== */
+function renderReplayHistory() {
+  const box = document.getElementById('replay-move-history');
+  if (!box) return;
+  box.innerHTML = '';
+  for (let i = 0; i < replayMoves.length; i += 2) {
+    const row = document.createElement('div');
+    row.className = 'move-row';
+
+    const num = document.createElement('span');
+    num.className = 'move-num';
+    num.textContent = (Math.floor(i / 2) + 1) + '.';
+
+    const w = document.createElement('span');
+    w.className = 'move-san' + (replayTarget === i + 1 ? ' move-active' : '');
+    w.textContent = replayMoves[i] || '';
+    w.style.cursor = 'pointer';
+    w.addEventListener('click', () => replayGoTo(i + 1));
+
+    const b = document.createElement('span');
+    b.className = 'move-san' + (replayTarget === i + 2 ? ' move-active' : '');
+    b.textContent = replayMoves[i + 1] || '';
+    if (replayMoves[i + 1]) {
+      b.style.cursor = 'pointer';
+      b.addEventListener('click', () => replayGoTo(i + 2));
+    }
+
+    row.appendChild(num); row.appendChild(w); row.appendChild(b);
+    box.appendChild(row);
+  }
+  const active = box.querySelector('.move-active');
+  if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+/* =====================================================
+   REPLAY — inicializa replayTarget ao carregar partida
+===================================================== */
+async function loadReplay(gameId) {
+  showScreen('replay');
+  try {
+    const snap = await db.ref('games/' + gameId).once('value');
+    replayGameData = snap.val();
+    if (!replayGameData) { alert('Partida não encontrada.'); openHistory(); return; }
+
+    const isWhite = replayGameData.myColor === 'w';
+    const lbl = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+    lbl('replay-label-bottom', isWhite
+      ? `${replayGameData.playerName} (Brancas)`
+      : `${replayGameData.playerName} (Pretas)`);
+    lbl('replay-label-top', isWhite
+      ? `${replayGameData.opponentName} (Pretas)`
+      : `${replayGameData.opponentName} (Brancas)`);
+    lbl('replay-avatar-bottom', isWhite ? '♙' : '♟');
+    lbl('replay-avatar-top',    isWhite ? '♟' : '♙');
+
+    replayMoves  = replayGameData.moves
+      ? replayGameData.moves.split('|').filter(Boolean)
+      : [];
+    replayIndex  = 0;
+    replayTarget = 0;
+    replayEngine = new ChessEngine();
+
+    const slider = document.getElementById('replay-slider');
+    if (slider) { slider.max = replayMoves.length; slider.value = 0; }
+
+    buildReplayBoard();
+    replayRenderBoard();
+    renderReplayHistory();
+    updateReplayCounter();
+
+    const resultMap = { win:'Vitória', loss:'Derrota', draw:'Empate', resigned:'Resignou' };
+    lbl('replay-status',
+      `Replay — ${resultMap[replayGameData.result] || ''} — ${replayMoves.length} lances`);
+
+  } catch (e) {
+    console.error(e);
+    alert('Erro ao carregar replay.');
+    openHistory();
+  }
+}
+
+/* =====================================================
+   INIT — Replay UI — slider e botões usam replayTarget
+===================================================== */
+function initReplayUI() {
+  el('btn-replay-back', 'click',  openHistory);
+  el('replay-first',    'click',  () => replayGoTo(0));
+  el('replay-prev',     'click',  () => replayGoTo(replayTarget - 1));
+  el('replay-next',     'click',  () => replayGoTo(replayTarget + 1));
+  el('replay-last',     'click',  () => replayGoTo(replayMoves.length));
+  el('replay-play',     'click',  toggleReplayAuto);
+  el('replay-slider',   'input',  e => replayGoTo(parseInt(e.target.value)));
+}
+
+/* =====================================================
+   REPLAY — aplica SAN com dupla estratégia de comparação
 ===================================================== */
 function applyMoveBySAN(eng, san) {
   if (!san) return false;
-  const color    = eng.turn;
-  const sanClean = san.replace(/[+#!?x]/g, '').trim();
-
-  /* Tenta todas as promoções possíveis */
-  const promos = ['Q', 'R', 'B', 'N'];
+  const color = eng.turn;
+  const sanA  = san.replace(/[+#!?]/g, '').trim();    // mantém x para capturas
+  const sanB  = san.replace(/[+#!?x]/g, '').trim();   // remove tudo
 
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       if (eng.board[r]?.[c]?.color !== color) continue;
       const legal = eng.legalMoves(r, c);
       for (const mv of legal) {
-        for (const promo of promos) {
+        for (const promo of ['Q', 'R', 'B', 'N']) {
           const clone = cloneEngine(eng);
           if (!clone.makeMove([r, c], mv.to, promo)) continue;
-          const generated = (clone.history[clone.history.length - 1] || '')
-            .replace(/[+#!?x]/g, '').trim();
-          if (generated === sanClean) {
+          const gen  = clone.history[clone.history.length - 1] || '';
+          const genA = gen.replace(/[+#!?]/g, '').trim();
+          const genB = gen.replace(/[+#!?x]/g, '').trim();
+          if (genA === sanA || genB === sanB) {
             eng.makeMove([r, c], mv.to, promo);
             return true;
           }
@@ -360,14 +466,16 @@ function applyMoveBySAN(eng, san) {
 
 function cloneEngine(src) {
   const dst = new ChessEngine();
-  dst.board     = src.board.map(row => row.map(p => p ? {...p} : null));
+  dst.board     = src.board.map(row => row.map(p => p ? { ...p } : null));
   dst.turn      = src.turn;
   dst.castling  = { ...src.castling };
   dst.enPassant = src.enPassant ? [...src.enPassant] : null;
   dst.history   = [...src.history];
   dst.captured  = { w: [...src.captured.w], b: [...src.captured.b] };
   dst.status    = src.status;
-  dst.lastMove  = src.lastMove ? { from:[...src.lastMove.from], to:[...src.lastMove.to] } : null;
+  dst.lastMove  = src.lastMove
+    ? { from: [...src.lastMove.from], to: [...src.lastMove.to] }
+    : null;
   return dst;
 }
 
